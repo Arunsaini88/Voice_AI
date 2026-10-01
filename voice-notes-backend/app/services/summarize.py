@@ -1,11 +1,7 @@
-# app/routes/summarize.py
-from fastapi import APIRouter
-from groq import AsyncGroq
-from app.config import settings
+# app/services/summarize.py
 import json
-
-router = APIRouter()
-groq_client = AsyncGroq(api_key=settings.GROQ_API_KEY)
+from app.config import settings
+from app.services.llm import groq_client
 
 SUMMARY_LANGUAGE_INSTRUCTIONS = {
     "en": "Summarize this transcript in English.",
@@ -17,20 +13,19 @@ SUMMARY_LANGUAGE_INSTRUCTIONS = {
     ),
 }
 
-@router.post("/llm/summarize")
-async def summarize(payload: dict):
-    lang = payload.get("language", "en")
+async def summarize_transcript(transcript: str, language: str = "en") -> dict:
+    """Returns {"title", "summary", "key_points"} for a spoken transcript."""
     system_prompt = f"""You summarize a spoken transcript into a concise summary.
 Do not invent content that wasn't said.
-{SUMMARY_LANGUAGE_INSTRUCTIONS.get(lang, SUMMARY_LANGUAGE_INSTRUCTIONS["en"])}
+{SUMMARY_LANGUAGE_INSTRUCTIONS.get(language, SUMMARY_LANGUAGE_INSTRUCTIONS["en"])}
 
 Output as JSON: {{"title": "...", "summary": "...", "key_points": ["...", "..."]}}"""
 
     response = await groq_client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model=settings.GROQ_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": payload["transcript"]},
+            {"role": "user", "content": transcript},
         ],
         temperature=0.2,
         response_format={"type": "json_object"},

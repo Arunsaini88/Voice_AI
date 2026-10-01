@@ -1,0 +1,16 @@
+# Pinned from voice-notes-backend/.venv (uv). Re-pin with:
+#   uv pip freeze | Out-File -Encoding utf8 requirements.txt   (PowerShell; plain `>` writes UTF-16)
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic-settings==2.15.0
+python-multipart==0.0.32
+
+SQLAlchemy[asyncio]==2.0.52
+asyncpg==0.31.0
+
+groq==1.7.0
+deepgram-sdk==3.11.0
+python-jose==3.5.0
+
+# test_client.py
+websockets==17.1
