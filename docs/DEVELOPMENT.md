@@ -20,7 +20,8 @@ Backend layout, `voice-notes-backend/app/`:
 |---|---|
 | `main.py` | App factory, CORS, router registration, startup log |
 | `config.py` | Every setting, read from env or `.env` |
-| `db.py` | Async engine. Rewrites Neon URLs for asyncpg. SQLite path is for tests |
+| `db.py` | Async engine. Rewrites Neon URLs for asyncpg. SQLite path is for tests. Startup schema check |
+| `../alembic/` | Migrations. `env.py` reuses the app engine, so `DATABASE_URL` is the only config |
 | `models.py` | `users`, `notes` |
 | `deps.py` | JWT create and decode, `get_current_user` |
 | `schemas.py` | Shared request shape for anything carrying a transcript |
@@ -111,25 +112,53 @@ python -m pytest            # 42 tests, ~8 s
 python -m pytest -k dictate # one area
 ```
 
-- `tests/conftest.py` sets env vars before importing the app, so the real `.env` is never read. The database is a temporary SQLite file; `db.py` switches to `NullPool` for SQLite.
+- `tests/conftest.py` sets env vars before importing the app, so the real `.env` is never read. The database is a temporary SQLite file; `db.py` switches to `NullPool` for SQLite. Tables come from `Base.metadata` directly, not Alembic, so the startup schema check passes.
 - Groq is replaced by patching `summarize_transcript` in the routes (or the Groq client in `test_summarize.py`).
 - Deepgram is replaced by `FakeDeepgramConnection`: every chunk yields a partial, `finish()` yields one final, and `start_ok` / `send_ok` flip the failure paths.
 - WebSocket tests use Starlette's sync `TestClient`. When patching a limiter for the dictate route, patch `app.routes.dictate.stream_limiter`; the route imported the name directly.
+
+## Migrations
+
+The schema is owned by Alembic. The app checks at startup that the tables exist and refuses to start otherwise, so a missed migration is one obvious error rather than a stream of 500s.
+
+```bash
+cd voice-notes-backend
+alembic upgrade head                                   # apply
+alembic current                                        # what the DB is at
+alembic check                                          # models vs DB: should say "No new upgrade operations"
+alembic revision --autogenerate -m "add notes.pinned"  # after changing models.py
+alembic downgrade -1                                   # undo the last one
+```
+
+Rules of thumb:
+
+- Change `models.py` first, then autogenerate, then **read the generated file**. Autogenerate misses renames (it sees drop + add) and does not detect JSON column changes well.
+- Every revision needs a working `downgrade`. CI runs upgrade, downgrade, upgrade on SQLite.
+- The first revision uses `IF NOT EXISTS` because the Neon database predates Alembic. Later revisions should not need that.
+- Pending: a foreign key from `notes.user_id` to `users.id`, after deleting notes whose `user_id` is `dev-user-1`.
+- The Docker entrypoint runs `alembic upgrade head` before uvicorn, so deploying a new image migrates the database. With one backend instance that is safe; with several, run the migration as a separate release step instead.
+
+## Docker and CI
+
+- `voice-notes-backend/Dockerfile`: python:3.12-slim, non-root user, healthcheck on `/health`, `LOG_FORMAT=json` by default. `docker-entrypoint.sh` migrates, then starts uvicorn on `$PORT` with `$WEB_CONCURRENCY` workers; it adds `--proxy-headers` only when `TRUST_PROXY_HEADERS=true`.
+- `voice-notes-frontend/Dockerfile`: two-stage, node build then nginx with SPA fallback and long-cache headers for hashed assets. `VITE_API_URL` is a build arg because Vite inlines it.
+- `docker-compose.yml` wires the two together on :8000 and :8080 and injects the frontend origin into `CORS_ORIGINS`.
+- `.github/workflows/ci.yml` runs the backend tests, a migration round-trip, frontend lint and build, then builds both images. No secrets needed.
+- `.gitattributes` forces LF on `*.sh` so the entrypoint survives a Windows checkout.
 
 ## Operational notes
 
 - **Groq retires models without notice.** `llama-3.1-8b-instant` went 404 mid-project. The model name is `GROQ_MODEL` in `.env`.
 - **Neon URLs** come as `postgresql://...?sslmode=require&channel_binding=require`. `db.py` swaps in the asyncpg driver and moves SSL into connect args; paste the URL as given.
-- **Schema** is `create_all` at startup. Fine until the second schema change; then add Alembic.
 - **Summaries can be missing.** If Groq fails during save, the note is stored with no title or summary rather than losing the transcript. The frontend shows "(untitled)".
 
 ## Roadmap
 
-Done: authentication, rate limits and caps, logging and failure handling, test suite.
+Done: authentication, rate limits and caps, logging and failure handling, test suite, Docker images, migrations, CI.
 
 Remaining before a public launch:
 
-1. Dockerfile, production env template, Alembic migrations, untrack `voice-notes-frontend/.env`, production `VITE_API_URL`.
-2. Frontend polish: move inline styles to the existing stylesheets, real page title.
-3. Password reset and token refresh.
-4. Redis-backed rate limits when running more than one instance.
+1. Frontend polish: move inline styles to the existing stylesheets, real page title.
+2. Password reset and token refresh.
+3. Redis-backed rate limits when running more than one instance.
+4. Foreign key from notes to users once the pre-auth rows are cleaned up.

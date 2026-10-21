@@ -1,0 +1,3 @@
+# Shell scripts must stay LF even when checked out on Windows, or the
+# container's /bin/sh rejects them.
+*.sh text eol=lf

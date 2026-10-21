@@ -1,9 +1,9 @@
 # app/db.py
 from urllib.parse import parse_qs, urlsplit, urlunsplit
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 from app.config import settings
-from app.models import Base
 
 
 def _engine_url_and_args(url: str) -> tuple[str, dict]:
@@ -31,7 +31,13 @@ async def get_db():
         yield session
 
 
-async def init_db():
-    # Good enough until there's a second migration; swap for Alembic then.
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+async def schema_ready() -> bool:
+    """True if the tables exist. Schema is managed by Alembic (`alembic upgrade
+    head`), not created at startup, so a fresh database fails fast with a clear
+    message instead of 500s on the first request."""
+    def _check(conn) -> bool:
+        insp = inspect(conn)
+        return insp.has_table("users") and insp.has_table("notes")
+
+    async with engine.connect() as conn:
+        return await conn.run_sync(_check)

@@ -13,6 +13,8 @@ voice-notes-frontend/   React 19 + Vite + TypeScript single-page app
 voice-notes-backend/    FastAPI + SQLAlchemy (async) + Postgres (Neon)
 test_client.py          Streams a WAV file through the backend like a browser would
 dev-browser.cmd         Opens Chrome with a WAV file as a fake microphone
+docker-compose.yml      Local production-like stack
+.github/workflows/      CI: tests, migrations, lint, build, Docker images
 docs/DEVELOPMENT.md     Internals: protocol, auth, limits, logging, testing
 ```
 
@@ -28,6 +30,7 @@ python -m venv .venv            # or: uv venv
 .venv/Scripts/activate          # Windows;  source .venv/bin/activate on macOS/Linux
 pip install -r requirements.txt # or: uv pip install -r requirements.txt
 cp .env.example .env            # then fill in the four required values
+alembic upgrade head            # create / update the tables
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -40,7 +43,7 @@ Required values in `.env`:
 | `DATABASE_URL` | Postgres URL. Neon's `postgresql://...?sslmode=require` form is accepted as-is |
 | `JWT_SECRET` | Any long random string. `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
 
-Tables are created on first start. Health check: `GET http://localhost:8000/health`. Interactive API docs: `http://localhost:8000/docs`.
+The schema is managed by Alembic; the app refuses to start until `alembic upgrade head` has run. Health check: `GET http://localhost:8000/health`. Interactive API docs: `http://localhost:8000/docs`.
 
 ### Frontend
 
@@ -50,9 +53,17 @@ npm install
 npm run dev                     # http://localhost:5173
 ```
 
-`VITE_API_URL` in `voice-notes-frontend/.env` points at the backend (default `http://localhost:8000`).
+Copy `.env.example` to `.env` if the backend is not on `http://localhost:8000`.
 
 Open the page via `http://localhost`, not a LAN IP: the microphone API only exists in a secure context.
+
+### Docker
+
+```bash
+docker compose up --build       # backend on :8000, frontend on :8080
+```
+
+Backend secrets are read from `voice-notes-backend/.env`. The backend container runs migrations on every start. The frontend image bakes the API URL in at build time: set `VITE_API_URL` in the environment (or `--build-arg VITE_API_URL=...` for a plain `docker build`).
 
 ## Using it
 
@@ -115,6 +126,15 @@ python test_client.py                                  # English WAV
 python test_client.py test_audio_hinglish.wav hinglish # Hinglish WAV
 ```
 
+## Deploying
+
+1. **Database**: any Postgres. Neon's connection string works unchanged.
+2. **Backend**: build `voice-notes-backend/Dockerfile`, supply the variables from `.env.production.example`. The entrypoint runs migrations, then uvicorn on `$PORT` (default 8000). Set `TRUST_PROXY_HEADERS=true` only behind a proxy you control. Keep one worker unless rate limits move to Redis.
+3. **Frontend**: build `voice-notes-frontend/Dockerfile` with `--build-arg VITE_API_URL=https://<backend host>`, or run `VITE_API_URL=... npm run build` and host `dist/` on any static host. The page must be served over HTTPS for the microphone to work.
+4. **CORS**: set the backend's `CORS_ORIGINS` to the frontend's exact origin.
+
+CI runs on every push: backend tests, a migration round-trip, frontend lint and build, and both Docker images.
+
 ## Status
 
-Working prototype, hardened for a private beta. Not yet done: Dockerfile and deployment config, Alembic migrations, password reset, token refresh, frontend styling. See the roadmap in `docs/DEVELOPMENT.md`.
+Working prototype, hardened for a private beta and deployable. Not yet done: password reset, token refresh, frontend styling, Redis-backed limits for multi-instance. See the roadmap in `docs/DEVELOPMENT.md`.
