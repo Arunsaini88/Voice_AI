@@ -50,6 +50,27 @@ Frontend, `voice-notes-frontend/src/`:
 | `index.css` | Color tokens (light and dark), base typography |
 | `App.css` | Component styles: top bar, controls, transcript, notes, auth card |
 
+## Desktop app
+
+`voice-notes-desktop/` is a Tauri 2 shell around the same frontend bundle. `tauri.conf.json` points `devUrl` at the Vite dev server and `frontendDist` at `voice-notes-frontend/dist`, so there is one UI codebase. The frontend detects the shell with `isDesktop()` (`src/desktop.ts`) and switches behaviour:
+
+| Concern | Browser | Desktop |
+|---|---|---|
+| Microphone | `MediaRecorder` in the page, webm/opus | Rust `cpal` capture, resampled to 16 kHz mono PCM (`src-tauri/src/dictation.rs`) |
+| Transport | WebSocket from the page | WebSocket from Rust (`tokio-tungstenite`), `encoding=linear16` |
+| Transcript events | `ws.onmessage` | Tauri events named `dictation`, same JSON, plus `closed` |
+| Server URL | baked `VITE_API_URL` | user-entered on the login card, stored in localStorage |
+| Start/stop | buttons | buttons or the global hotkey Ctrl+Shift+M (`hotkey` event) |
+| Paste | not possible | `paste_text` command: clipboard + Ctrl+V via `enigo`, previous clipboard restored (`paste.rs`) |
+
+Both engines feed the same `handleMessage` in `useDictation.ts`, so the hook's state machine and the stop handshake are shared. In "Type into any app" mode the app hides its own window before pasting so focus returns to the user's program.
+
+Why capture audio in Rust rather than the webview: WebView2's microphone permission is unreliable to automate, and a Rust source can be swapped for a WAV file (`VN_FAKE_MIC=path`) on machines without a microphone. That is how this feature is tested here.
+
+Driving the desktop UI for tests: launch with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` and the webview speaks the DevTools protocol like Chrome. Invoke Tauri commands from the console with `window.__TAURI_INTERNALS__.invoke(name, args)`. To check a paste, give a window keyboard focus with `SetForegroundWindow` (do not tap Alt to satisfy the foreground rule: it puts the window in menu mode and eats the next key) and read its contents back.
+
+Known limits: Windows only so far (`enigo` and `arboard` support macOS and Linux, but nothing is tested there); the installer is unsigned, so SmartScreen warns on first run; the hotkey is fixed.
+
 ## Dictation protocol
 
 Client connects to `/dictate/stream?lang=<en|hi|hinglish>&token=<jwt>`. Browsers cannot set headers on a WebSocket, so the token is a query parameter. Two optional parameters, `encoding=linear16&sample_rate=16000`, tell Deepgram the audio is raw PCM; omit them for browser webm/opus and Deepgram sniffs the container.
@@ -176,8 +197,9 @@ Done: authentication with refresh tokens and password reset, rate limits and cap
 
 Remaining before a public launch:
 
-1. Frontend unit tests (vitest) for `useDictation` and `auth.ts`.
-2. Change-password and delete-account from inside the app.
+1. Desktop: code-signing certificate, configurable hotkey, macOS and Linux builds, auto-update.
+2. Frontend unit tests (vitest) for `useDictation` and `auth.ts`.
+3. Change-password and delete-account from inside the app.
 
 ### Checking the UI without a browser session
 

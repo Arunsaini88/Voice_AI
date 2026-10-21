@@ -44,6 +44,48 @@
   min-width: 0;
 }
 
+/* Mode switch (desktop only) --------------------------------------------- */
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.mode {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.mode strong {
+  color: var(--text-h);
+  font-weight: 600;
+}
+.mode span {
+  font-size: 13px;
+  opacity: 0.8;
+}
+.mode.is-active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.mode:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
 /* Controls ------------------------------------------------------------------ */
 .card {
   background: var(--surface);
@@ -340,6 +382,9 @@
 @media (max-width: 640px) {
   .user-email {
     display: none;
+  }
+  .mode-switch {
+    grid-template-columns: 1fr;
   }
   .btn-primary {
     flex: 1 1 auto;

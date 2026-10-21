@@ -56,6 +56,26 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  desktop:
+    name: Desktop (Rust) compiles
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: voice-notes-frontend/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: voice-notes-desktop/src-tauri
+      # generate_context!() embeds frontendDist, so the frontend must be built first.
+      - run: npm ci && npm run build
+        working-directory: voice-notes-frontend
+      - run: cargo check
+        working-directory: voice-notes-desktop/src-tauri
+
   docker:
     name: Docker images build
     runs-on: ubuntu-latest

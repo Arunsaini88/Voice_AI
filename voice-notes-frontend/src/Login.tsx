@@ -1,20 +1,24 @@
 // src/Login.tsx
 import { useState, type FormEvent } from "react";
-import { authenticate, type AuthMode } from "./auth";
+import { apiBase, authenticate, DEFAULT_API, setApiBase, type AuthMode } from "./auth";
+import { isDesktop } from "./desktop";
 import Brand from "./Brand";
 
 export default function Login({ onLogin, onForgot }: { onLogin: () => void; onForgot: () => void }) {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [server, setServer] = useState(apiBase());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const desktop = isDesktop();
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
+      if (desktop) setApiBase(server === DEFAULT_API ? null : server);
       await authenticate(mode, email, password);
       onLogin();
     } catch (err) {
@@ -31,6 +35,19 @@ export default function Login({ onLogin, onForgot }: { onLogin: () => void; onFo
         <p className="auth-sub">Dictate in English, Hindi, or Hinglish. Get a summary you can keep.</p>
 
         <form onSubmit={submit} className="form">
+          {desktop && (
+            <label className="field">
+              Server
+              <input
+                className="input"
+                type="url"
+                value={server}
+                onChange={(e) => setServer(e.target.value)}
+                placeholder={DEFAULT_API}
+                required
+              />
+            </label>
+          )}
           <label className="field">
             Email
             <input

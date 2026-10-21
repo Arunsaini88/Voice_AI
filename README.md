@@ -8,8 +8,14 @@ Dictate in English, Hindi, or Hinglish. Get live text as you speak, then a title
 - **Accounts**: email and password signup, JWT sessions, notes private per user.
 - **Abuse controls**: rate limits on every paid call, transcript and session caps, origin-restricted CORS.
 
+Two ways to use it:
+
+- **Web app**: notes mode. Speak, stop, get a summarized note.
+- **Desktop app** (Windows, Tauri): the same notes mode, plus **type into any app**. Press Ctrl+Shift+M in any program, speak, press it again, and the text appears where your cursor is.
+
 ```
-voice-notes-frontend/   React 19 + Vite + TypeScript single-page app
+voice-notes-frontend/   React 19 + Vite + TypeScript single-page app (shared by web and desktop)
+voice-notes-desktop/    Tauri shell: tray icon, global hotkey, native mic capture, paste into the focused app
 voice-notes-backend/    FastAPI + SQLAlchemy (async) + Postgres (Neon)
 test_client.py          Streams a WAV file through the backend like a browser would
 dev-browser.cmd         Opens Chrome with a WAV file as a fake microphone
@@ -56,6 +62,24 @@ npm run dev                     # http://localhost:5173
 Copy `.env.example` to `.env` if the backend is not on `http://localhost:8000`.
 
 Open the page via `http://localhost`, not a LAN IP: the microphone API only exists in a secure context.
+
+### Desktop app
+
+Prerequisites: Rust (rustup) and the WebView2 runtime, which Windows 10/11 already has.
+
+```bash
+cd voice-notes-desktop
+npm install
+npm run dev                     # starts the frontend dev server and the app
+npm run build                   # installer in src-tauri/target/release/bundle/nsis/
+```
+
+On first launch, enter the server URL (your deployed backend, or `http://localhost:8000` in development), then log in. Pick a mode at the top:
+
+- **Notes**: as the web app.
+- **Type into any app**: put the cursor where the text should go, press **Ctrl+Shift+M**, speak, press it again. The text is pasted at the cursor. Tick "Also save as a note" to keep a copy. Closing the window hides the app in the tray; the hotkey keeps working.
+
+No microphone? Set `VN_FAKE_MIC=C:\path\to\file.wav` before starting and the app streams that file instead.
 
 ### Docker
 
@@ -150,4 +174,4 @@ CI runs on every push: backend tests, a migration round-trip, frontend lint and 
 
 ## Status
 
-Ready for a private beta: hardened, deployable, horizontally scalable with Redis, with accounts, session refresh, password reset, and a light and dark themed UI. Not yet done: frontend unit tests, in-app change-password. See the roadmap in `docs/DEVELOPMENT.md`.
+Ready for a private beta: hardened, deployable, horizontally scalable with Redis, with accounts, session refresh, password reset, a light and dark themed UI, and a Windows desktop app that types dictation into any program. Not yet done: signed installer, macOS and Linux desktop builds, frontend unit tests, in-app change-password. See the roadmap in `docs/DEVELOPMENT.md`.

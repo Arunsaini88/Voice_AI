@@ -1,11 +1,23 @@
 // src/hooks/useDictation.ts
-import { useRef, useState } from "react";
-import { API, ensureAccessToken } from "../auth";
+//
+// One hook, two engines:
+//   browser  MediaRecorder -> WebSocket (this file)
+//   desktop  Rust captures the mic and talks to the server; we get events
+// Both deliver the same message stream (partial / final / limit / error /
+// done), so everything above this hook is engine-agnostic.
+import { useEffect, useRef, useState } from "react";
+import { apiBase, ensureAccessToken } from "../auth";
+import {
+  isDesktop,
+  onDictationEvent,
+  startNativeDictation,
+  stopNativeDictation,
+  type DictationEvent,
+} from "../desktop";
 
 type Language = "en" | "hi" | "hinglish";
 type Status = "idle" | "recording" | "finishing";
 
-const WS_BASE = API.replace(/^http/, "ws");
 const FLUSH_TIMEOUT_MS = 4000; // never let stop() hang if the server goes quiet
 /** Sentinel error value: the server rejected the login token. App turns this into a logout. */
 export const AUTH_EXPIRED = "AUTH_EXPIRED";
@@ -19,6 +31,12 @@ export function useDictation(language: Language) {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const segmentsRef = useRef<string[]>([]);          // state mirror, readable synchronously inside stop()
   const onDoneRef = useRef<(() => void) | null>(null);
+  const statusRef = useRef<Status>("idle");
+
+  const setStatusBoth = (s: Status) => {
+    statusRef.current = s;
+    setStatus(s);
+  };
 
   const pushSegment = (text: string) => {
     segmentsRef.current = [...segmentsRef.current, text];
@@ -30,27 +48,113 @@ export function useDictation(language: Language) {
     recorderRef.current = null;
     wsRef.current?.close();
     wsRef.current = null;
-    setStatus("idle");
+    setStatusBoth("idle");
   };
 
+  /** Shared handling of a server message, whichever engine delivered it. */
+  const handleMessage = (msg: DictationEvent) => {
+    switch (msg.type) {
+      case "partial":
+        setLiveText(msg.text); // may briefly flash raw script for hinglish
+        break;
+      case "final":
+        pushSegment(msg.text); // already romanized if hinglish
+        setLiveText("");
+        break;
+      case "done":
+        onDoneRef.current?.();
+        break;
+      case "error":
+        // Server-side failure (Deepgram down, bad key…). Keep whatever was
+        // transcribed so far; the user can still press Stop to save it.
+        setError(msg.text);
+        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+        break;
+      case "limit":
+        // Server hit the per-session duration cap and already flushed. Stop
+        // the mic; the user's next Stop click resolves immediately and saves.
+        setError(msg.text);
+        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+        if (isDesktop()) void stopNativeDictation();
+        break;
+      case "close":
+        handleClose(msg.code, msg.reason);
+        break;
+      case "closed":
+        // Desktop engine fully ended (after done, error, or server close).
+        onDoneRef.current?.();
+        if (statusRef.current === "recording") setStatusBoth("idle");
+        break;
+      default:
+        break;
+    }
+  };
+
+  /** Non-normal close codes carry the reason the server shut us out. */
+  const handleClose = (code: number, reason: string): boolean => {
+    if (code === 1008) {
+      setError(AUTH_EXPIRED); // bad or expired token
+      cleanup();
+      return true;
+    }
+    if (code === 1011) {
+      setError(reason || "Transcription service unavailable. Please try again later.");
+      cleanup();
+      return true;
+    }
+    if (code === 4429) {
+      setError(reason || "Too many recordings. Try again in a minute.");
+      cleanup();
+      return true;
+    }
+    return false;
+  };
+
+  // Desktop: subscribe once to the Rust engine's events.
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    onDictationEvent((e) => handleMessage(e)).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const start = async () => {
+    if (statusRef.current !== "idle") return;
     segmentsRef.current = [];
     setSegments([]);
     setLiveText("");
     setError(null);
-
-    // getUserMedia only exists in a secure context: https://, or http://localhost.
-    // Opening the page via a LAN IP (http://192.168.x.x:5173) leaves it undefined.
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError(`Microphone API unavailable — open the page via http://localhost, not ${location.host}`);
-      return;
-    }
 
     // The server only checks the token when the socket opens, so make sure it
     // will not expire mid-handshake; a long recording is unaffected afterwards.
     const token = await ensureAccessToken(120);
     if (!token) {
       setError(AUTH_EXPIRED);
+      return;
+    }
+
+    if (isDesktop()) {
+      try {
+        await startNativeDictation(apiBase(), token, language);
+        setStatusBoth("recording");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+      return;
+    }
+
+    // getUserMedia only exists in a secure context: https://, or http://localhost.
+    // Opening the page via a LAN IP (http://192.168.x.x:5173) leaves it undefined.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError(`Microphone API unavailable — open the page via http://localhost, not ${location.host}`);
       return;
     }
 
@@ -68,58 +172,19 @@ export function useDictation(language: Language) {
       );
       return;
     }
-    setStatus("recording");
+    setStatusBoth("recording");
 
     // Token goes in the query string: browsers can't set headers on a WebSocket.
-    const ws = new WebSocket(
-      `${WS_BASE}/dictate/stream?lang=${language}&token=${encodeURIComponent(token)}`,
-    );
+    const wsBase = apiBase().replace(/^http/, "ws");
+    const ws = new WebSocket(`${wsBase}/dictate/stream?lang=${language}&token=${encodeURIComponent(token)}`);
     wsRef.current = ws;
 
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.type === "partial") setLiveText(msg.text); // may briefly flash raw script for hinglish
-      if (msg.type === "final") {
-        pushSegment(msg.text); // already romanized if hinglish
-        setLiveText("");
-      }
-      if (msg.type === "done") onDoneRef.current?.();
-      if (msg.type === "error") {
-        // Server-side failure (Deepgram down, bad key…). Keep whatever was
-        // transcribed so far; the user can still press Stop to save it.
-        setError(msg.text);
-        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
-      }
-      if (msg.type === "limit") {
-        // Server hit the per-session duration cap and already flushed. Stop
-        // the mic; the user's next Stop click resolves immediately and saves.
-        setError(msg.text);
-        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
-      }
-    };
+    ws.onmessage = (event) => handleMessage(JSON.parse(event.data));
     ws.onclose = (ev) => {
-      if (ev.code === 1008) {
-        // Server accepted then closed with "policy violation": bad or expired token.
-        setError(AUTH_EXPIRED);
-        cleanup();
-        return;
-      }
-      if (ev.code === 1011) {
-        // Server could not reach the transcription service.
-        setError(ev.reason || "Transcription service unavailable. Please try again later.");
-        cleanup();
-        return;
-      }
-      if (ev.code === 4429) {
-        // App-defined: rate limit or too many concurrent recordings.
-        setError(ev.reason || "Too many recordings. Try again in a minute.");
-        cleanup();
-        return;
-      }
-      onDoneRef.current?.(); // server went away mid-flush: resolve with what we have
+      if (!handleClose(ev.code, ev.reason)) onDoneRef.current?.(); // server went away mid-flush: resolve with what we have
     };
     ws.onerror = () => {
-      setError(`Could not reach the backend at ${WS_BASE} — is uvicorn running?`);
+      setError(`Could not reach the backend at ${wsBase} — is it running?`);
       cleanup();
     };
 
@@ -146,7 +211,11 @@ export function useDictation(language: Language) {
   /** Stops the mic, waits for the server to flush the trailing final, resolves with the full transcript. */
   const stop = (): Promise<string[]> =>
     new Promise((resolve) => {
-      setStatus("finishing");
+      if (statusRef.current === "idle") {
+        resolve(segmentsRef.current);
+        return;
+      }
+      setStatusBoth("finishing");
       let settled = false;
       const finish = () => {
         if (settled) return;
@@ -156,10 +225,12 @@ export function useDictation(language: Language) {
         cleanup();
         resolve(segmentsRef.current);
       };
-      const timer = setTimeout(finish, FLUSH_TIMEOUT_MS);
+      const timer = setTimeout(finish, FLUSH_TIMEOUT_MS + (isDesktop() ? 2000 : 0));
       onDoneRef.current = finish;
 
-      if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      if (isDesktop()) {
+        void stopNativeDictation(); // -> Rust sends {"type":"stop"} -> server "done" -> "closed"
+      } else if (recorderRef.current && recorderRef.current.state !== "inactive") {
         recorderRef.current.stop(); // -> last ondataavailable -> onstop -> {"type":"stop"} -> server "done"
       } else {
         finish();

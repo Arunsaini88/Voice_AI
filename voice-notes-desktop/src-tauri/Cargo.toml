@@ -1,0 +1,33 @@
+[package]
+name = "voice-notes-desktop"
+version = "0.1.0"
+description = "Voice Notes desktop: dictate notes, or dictate straight into any app"
+authors = ["Arun Saini"]
+edition = "2021"
+
+[lib]
+name = "voice_notes_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+urlencoding = "2"
+cpal = "0.15"
+hound = "3.5"
+arboard = "3"
+enigo = "0.3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

@@ -1,6 +1,27 @@
 // src/auth.ts — session handling: short-lived access token in memory,
 // long-lived refresh token in localStorage, silent refresh on 401.
-export const API = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
+const BUILT_IN_API = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
+const API_KEY = "voice-notes-api";
+
+/** Backend base URL. The desktop app lets the user override the built-in one. */
+export function apiBase(): string {
+  try {
+    return (localStorage.getItem(API_KEY) || BUILT_IN_API).replace(/\/+$/, "");
+  } catch {
+    return BUILT_IN_API;
+  }
+}
+
+export function setApiBase(url: string | null) {
+  try {
+    if (url && url.trim()) localStorage.setItem(API_KEY, url.trim());
+    else localStorage.removeItem(API_KEY);
+  } catch {
+    /* storage blocked */
+  }
+}
+
+export const DEFAULT_API = BUILT_IN_API;
 
 const REFRESH_KEY = "voice-notes-refresh";
 let accessToken: string | null = null;
@@ -67,7 +88,7 @@ export function refreshSession(): Promise<string | null> {
     const refresh = readRefresh();
     if (!refresh) return null;
     try {
-      const res = await fetch(`${API}/auth/refresh`, {
+      const res = await fetch(`${apiBase()}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: refresh }),
@@ -105,7 +126,7 @@ export async function authFetch(path: string, init: RequestInit = {}): Promise<R
   const send = (token: string) => {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${token}`);
-    return fetch(`${API}${path}`, { ...init, headers });
+    return fetch(`${apiBase()}${path}`, { ...init, headers });
   };
 
   let token = await ensureAccessToken();
@@ -127,7 +148,7 @@ export type AuthMode = "login" | "signup";
 
 /** POST /auth/login or /auth/signup. Stores the session; rejects with the server's message. */
 export async function authenticate(mode: AuthMode, email: string, password: string): Promise<void> {
-  const res = await fetch(`${API}/auth/${mode}`, {
+  const res = await fetch(`${apiBase()}/auth/${mode}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -147,7 +168,7 @@ export async function authenticate(mode: AuthMode, email: string, password: stri
 }
 
 async function postJson(path: string, body: unknown): Promise<Response> {
-  return fetch(`${API}${path}`, {
+  return fetch(`${apiBase()}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -184,7 +205,7 @@ export async function logout(): Promise<void> {
   clearSession();
   if (!refresh) return;
   try {
-    await fetch(`${API}/auth/logout`, {
+    await fetch(`${apiBase()}/auth/logout`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: refresh }),
