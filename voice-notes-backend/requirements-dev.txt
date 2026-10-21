@@ -1,0 +1,7 @@
+# Test-only dependencies. Install with:
+#   uv pip install --python .venv/Scripts/python.exe -r requirements-dev.txt
+# Run tests from voice-notes-backend/:
+#   .venv/Scripts/python.exe -m pytest
+pytest==9.0.2
+pytest-asyncio==1.3.0
+aiosqlite==0.22.1

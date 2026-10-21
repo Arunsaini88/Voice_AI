@@ -1,14 +1,16 @@
 // src/hooks/useDictation.ts
 import { useRef, useState } from "react";
+import { API } from "../auth";
 
 type Language = "en" | "hi" | "hinglish";
 type Status = "idle" | "recording" | "finishing";
 
-const API = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
 const WS_BASE = API.replace(/^http/, "ws");
 const FLUSH_TIMEOUT_MS = 4000; // never let stop() hang if the server goes quiet
+/** Sentinel error value: the server rejected the login token. App turns this into a logout. */
+export const AUTH_EXPIRED = "AUTH_EXPIRED";
 
-export function useDictation(language: Language) {
+export function useDictation(language: Language, token: string) {
   const [liveText, setLiveText] = useState("");
   const [segments, setSegments] = useState<string[]>([]);
   const [status, setStatus] = useState<Status>("idle");
@@ -60,7 +62,10 @@ export function useDictation(language: Language) {
     }
     setStatus("recording");
 
-    const ws = new WebSocket(`${WS_BASE}/dictate/stream?lang=${language}`);
+    // Token goes in the query string: browsers can't set headers on a WebSocket.
+    const ws = new WebSocket(
+      `${WS_BASE}/dictate/stream?lang=${language}&token=${encodeURIComponent(token)}`,
+    );
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
@@ -71,8 +76,40 @@ export function useDictation(language: Language) {
         setLiveText("");
       }
       if (msg.type === "done") onDoneRef.current?.();
+      if (msg.type === "error") {
+        // Server-side failure (Deepgram down, bad key…). Keep whatever was
+        // transcribed so far; the user can still press Stop to save it.
+        setError(msg.text);
+        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+      }
+      if (msg.type === "limit") {
+        // Server hit the per-session duration cap and already flushed. Stop
+        // the mic; the user's next Stop click resolves immediately and saves.
+        setError(msg.text);
+        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+      }
     };
-    ws.onclose = () => onDoneRef.current?.(); // server went away mid-flush: resolve with what we have
+    ws.onclose = (ev) => {
+      if (ev.code === 1008) {
+        // Server accepted then closed with "policy violation": bad or expired token.
+        setError(AUTH_EXPIRED);
+        cleanup();
+        return;
+      }
+      if (ev.code === 1011) {
+        // Server could not reach the transcription service.
+        setError(ev.reason || "Transcription service unavailable. Please try again later.");
+        cleanup();
+        return;
+      }
+      if (ev.code === 4429) {
+        // App-defined: rate limit or too many concurrent recordings.
+        setError(ev.reason || "Too many recordings. Try again in a minute.");
+        cleanup();
+        return;
+      }
+      onDoneRef.current?.(); // server went away mid-flush: resolve with what we have
+    };
     ws.onerror = () => {
       setError(`Could not reach the backend at ${WS_BASE} — is uvicorn running?`);
       cleanup();

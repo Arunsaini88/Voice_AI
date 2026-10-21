@@ -1,6 +1,8 @@
 // src/App.tsx
 import { useCallback, useEffect, useState } from "react";
-import { useDictation } from "./hooks/useDictation";
+import { AUTH_EXPIRED, useDictation } from "./hooks/useDictation";
+import { AuthExpired, authFetch, getToken, setToken } from "./auth";
+import Login from "./Login";
 
 type Language = "en" | "hi" | "hinglish";
 
@@ -14,28 +16,50 @@ type Note = {
   created_at: string;
 };
 
-const API = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
-// Static token the backend accepts while DEV_TOKEN is set in its .env. Replace with a real login later.
-const AUTH = { Authorization: `Bearer ${(import.meta.env.VITE_DEV_TOKEN as string | undefined) ?? "dev-token-123"}` };
-
 export default function App() {
+  const [token, setTokenState] = useState<string | null>(getToken);
+
+  const logout = useCallback(() => {
+    setToken(null);
+    setTokenState(null);
+  }, []);
+
+  if (!token) return <Login onLogin={setTokenState} />;
+  return <Workspace token={token} onLogout={logout} />;
+}
+
+function Workspace({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [language, setLanguage] = useState<Language>("en");
-  const { liveText, segments, status, error, start, stop } = useDictation(language);
+  const { liveText, segments, status, error, start, stop } = useDictation(language, token);
   const [notes, setNotes] = useState<Note[]>([]);
   const [saving, setSaving] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
+  // Any 401 from the API means the token is stale: drop it and show the login screen.
+  const fail = useCallback(
+    (e: unknown) => {
+      if (e instanceof AuthExpired) onLogout();
+      else setApiError(e instanceof Error ? e.message : String(e));
+    },
+    [onLogout],
+  );
+
   const loadNotes = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/notes`, { headers: AUTH });
+      const res = await authFetch("/notes");
       if (!res.ok) throw new Error(`GET /notes ${res.status}`);
       setNotes(await res.json());
     } catch (e) {
-      setApiError(String(e));
+      fail(e);
     }
-  }, []);
+  }, [fail]);
 
   useEffect(() => { void loadNotes(); }, [loadNotes]);
+
+  // The WebSocket reports an expired token through the hook's error string.
+  useEffect(() => {
+    if (error === AUTH_EXPIRED) onLogout();
+  }, [error, onLogout]);
 
   const handleStop = async () => {
     const finalSegments = await stop(); // resolves after the server flushes the last sentence
@@ -45,40 +69,48 @@ export default function App() {
     setSaving(true);
     setApiError(null);
     try {
-      const res = await fetch(`${API}/notes`, {
+      const res = await authFetch("/notes", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...AUTH },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ transcript, language }),
       });
       if (!res.ok) throw new Error(`POST /notes ${res.status}`);
       const note: Note = await res.json();
       setNotes((prev) => [note, ...prev]);
     } catch (e) {
-      setApiError(String(e));
+      fail(e);
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    const res = await fetch(`${API}/notes/${id}`, { method: "DELETE", headers: AUTH });
-    if (res.ok) setNotes((prev) => prev.filter((n) => n.id !== id));
-    else setApiError(`DELETE /notes/${id} ${res.status}`);
+    try {
+      const res = await authFetch(`/notes/${id}`, { method: "DELETE" });
+      if (res.ok) setNotes((prev) => prev.filter((n) => n.id !== id));
+      else setApiError(`DELETE /notes/${id} ${res.status}`);
+    } catch (e) {
+      fail(e);
+    }
   };
 
   return (
     <div style={{ maxWidth: 600, margin: "40px auto", fontFamily: "sans-serif" }}>
-      <select value={language} onChange={(e) => setLanguage(e.target.value as Language)} disabled={status !== "idle"}>
-        <option value="en">English</option>
-        <option value="hi">Hindi</option>
-        <option value="hinglish">Hinglish</option>
-      </select>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <div>
+          <select value={language} onChange={(e) => setLanguage(e.target.value as Language)} disabled={status !== "idle"}>
+            <option value="en">English</option>
+            <option value="hi">Hindi</option>
+            <option value="hinglish">Hinglish</option>
+          </select>{" "}
+          <button onClick={status === "idle" ? () => start() : handleStop} disabled={status === "finishing" || saving}>
+            {status === "idle" ? "Start" : status === "finishing" ? "Finishing…" : "Stop"}
+          </button>
+        </div>
+        <button onClick={onLogout} disabled={status !== "idle"}>Log out</button>
+      </div>
 
-      <button onClick={status === "idle" ? () => start() : handleStop} disabled={status === "finishing" || saving}>
-        {status === "idle" ? "Start" : status === "finishing" ? "Finishing…" : "Stop"}
-      </button>
-
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && error !== AUTH_EXPIRED && <p style={{ color: "crimson" }}>{error}</p>}
       {apiError && <p style={{ color: "crimson" }}>{apiError}</p>}
 
       <p style={{ minHeight: 100, whiteSpace: "pre-wrap" }}>

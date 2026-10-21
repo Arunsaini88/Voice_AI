@@ -1,4 +1,5 @@
 # app/routes/notes.py
+import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -7,14 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db
 from app.deps import get_current_user
 from app.models import Note
+from app.ratelimit import limit_llm_by_user
+from app.schemas import TranscriptPayload
 from app.services.summarize import summarize_transcript
 
 router = APIRouter(prefix="/notes", tags=["notes"])
+log = logging.getLogger("app.notes")
 
 
-class NoteCreate(BaseModel):
-    transcript: str
-    language: str = "en"
+class NoteCreate(TranscriptPayload):
+    pass
 
 
 class NoteOut(BaseModel):
@@ -37,13 +40,19 @@ async def _owned_note(note_id: str, user: dict, db: AsyncSession) -> Note:
     return note
 
 
-@router.post("", response_model=NoteOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=NoteOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(limit_llm_by_user)])
 async def create_note(
     payload: NoteCreate,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    s = await summarize_transcript(payload.transcript, payload.language)
+    try:
+        s = await summarize_transcript(payload.transcript, payload.language)
+    except Exception:  # noqa: BLE001
+        # Groq outage must not lose a transcript the user just spent minutes
+        # dictating. Save it without a summary; the log carries the cause.
+        log.exception("summarize failed; saving note without summary", extra={"user_id": user["id"]})
+        s = {"title": None, "summary": None, "key_points": None}
     note = Note(
         user_id=user["id"],
         raw_transcript=payload.transcript,
