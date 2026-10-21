@@ -32,6 +32,8 @@ Backend layout, `voice-notes-backend/app/`:
 | `routes/notes.py` | CRUD plus summarize-on-create |
 | `routes/summarizer.py` | Stateless summary preview |
 | `services/llm.py` | One shared Groq client |
+| `services/tokens.py` | Refresh-token rotation and reuse detection; reset tokens |
+| `services/mailer.py` | Outbound email: console or SMTP |
 | `services/romanize.py` | Devanagari to typed Hinglish |
 | `services/summarize.py` | Title, summary, key points; output coerced to a fixed shape |
 
@@ -41,6 +43,7 @@ Frontend, `voice-notes-frontend/src/`:
 |---|---|
 | `App.tsx` | Login gate, language picker, record button, notes list |
 | `Login.tsx` | Signup and login form |
+| `PasswordReset.tsx` | Forgot-password form and the reset page the emailed link opens |
 | `Brand.tsx` | App name and microphone mark |
 | `auth.ts` | Token storage, `authFetch` wrapper that logs out on 401 |
 | `hooks/useDictation.ts` | Mic capture, WebSocket, stop handshake, error mapping |
@@ -90,6 +93,9 @@ Deepgram's SDK invokes callbacks on its own thread. Anything raised there is los
 - **Refresh tokens** are random strings whose SHA-256 is stored in `refresh_tokens` (`services/tokens.py`). `POST /auth/refresh` rotates: the presented token is revoked and a new one issued in the same `family_id`. Presenting a revoked token again is treated as theft and revokes the whole family. `POST /auth/logout` revokes one token; `revoke_all_for_user` (for password reset) revokes everything.
 - The frontend keeps the access token in memory and the refresh token in localStorage. `authFetch` retries once after a refresh on 401; the dictation hook refreshes before connecting if the access token has under two minutes left. Moving the refresh token to an httpOnly cookie is a contained change in `auth.ts` plus the refresh route, and needs the frontend and API on one parent domain.
 - `notes.user_id` and `refresh_tokens.user_id` are foreign keys to `users.id` with cascade delete (migration 0002).
+- **Password reset.** `POST /auth/forgot-password` always answers 202 with one fixed message and sends the mail from a background task, so neither the body nor the timing reveals whether the address exists. The link carries a random token whose hash is stored in `password_reset_tokens` for 30 minutes; a new request invalidates earlier links. `POST /auth/reset-password` burns the token, sets the new hash, and revokes every refresh token for the user. Rate limited per IP (429) and per address (silently dropped, still 202).
+- **Mail** goes through `services/mailer.py`: `console` logs the message, `smtp` uses `smtplib` in a thread with STARTTLS, SSL, or plain. Tests patch `app.routes.auth.send_email` and read the link out of the captured text (`outbox` fixture).
+- The frontend has one deep link, `/reset-password?token=…`, handled by a path check in `App.tsx` rather than a router. nginx's SPA fallback and the Vite dev server both serve `index.html` for it.
 
 ## Rate limits
 
@@ -163,9 +169,9 @@ Done: authentication, rate limits and caps, logging and failure handling, test s
 
 Remaining before a public launch:
 
-1. Password reset (email provider needed; revoke all refresh tokens on reset).
-2. Redis-backed rate limits when running more than one instance.
-3. Frontend unit tests (vitest) for `useDictation` and `auth.ts`.
+1. Redis-backed rate limits when running more than one instance.
+2. Frontend unit tests (vitest) for `useDictation` and `auth.ts`.
+3. Change-password and delete-account from inside the app.
 
 ### Checking the UI without a browser session
 

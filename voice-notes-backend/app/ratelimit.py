@@ -56,6 +56,7 @@ def client_ip(request: Request) -> str:
 
 # One limiter per protected surface, shared across requests.
 auth_limiter = RateLimiter(settings.RATE_AUTH_PER_MIN, 60)
+reset_limiter = RateLimiter(settings.RATE_RESET_PER_MIN, 60)   # keyed by IP and by email address
 llm_limiter = RateLimiter(settings.RATE_LLM_PER_MIN, 60)
 stream_limiter = RateLimiter(settings.RATE_STREAMS_PER_MIN, 60)
 
@@ -65,6 +66,19 @@ async def limit_auth_by_ip(request: Request):
     wait = auth_limiter.retry_after(client_ip(request))
     if wait is not None:
         raise _too_many(wait)
+
+
+async def limit_reset_by_ip(request: Request):
+    """Dependency for forgot-password: caps outbound mail per client."""
+    wait = reset_limiter.retry_after("ip:" + client_ip(request))
+    if wait is not None:
+        raise _too_many(wait)
+
+
+def reset_allowed_for_email(email: str) -> bool:
+    """Per-address cap on reset mail. The route answers 202 either way so the
+    limit itself can't be used to probe which addresses exist."""
+    return reset_limiter.retry_after("email:" + email) is None
 
 
 async def limit_llm_by_user(payload: TranscriptPayload, user: dict = Depends(get_current_user)):

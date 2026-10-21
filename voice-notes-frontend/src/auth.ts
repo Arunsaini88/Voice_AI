@@ -146,6 +146,38 @@ export async function authenticate(mode: AuthMode, email: string, password: stri
   storeSession(body as TokenPair);
 }
 
+async function postJson(path: string, body: unknown): Promise<Response> {
+  return fetch(`${API}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function errorMessage(body: { detail?: unknown }, fallback: string): string {
+  const detail = body.detail;
+  if (Array.isArray(detail))
+    return detail.map((d: { msg?: string }) => String(d.msg ?? "").replace(/^Value error, /, "")).join("; ");
+  return typeof detail === "string" ? detail : fallback;
+}
+
+/** Ask for a reset email. Resolves with the server's (deliberately generic) message. */
+export async function requestPasswordReset(email: string): Promise<string> {
+  const res = await postJson("/auth/forgot-password", { email });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(errorMessage(body, `Request failed (${res.status})`));
+  return body.detail as string;
+}
+
+/** Set a new password using the token from the emailed link. */
+export async function resetPassword(token: string, password: string): Promise<void> {
+  const res = await postJson("/auth/reset-password", { token, password });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(errorMessage(body, `Reset failed (${res.status})`));
+  }
+}
+
 /** Revoke the refresh token server-side (best effort), then forget the session locally. */
 export async function logout(): Promise<void> {
   const refresh = readRefresh();

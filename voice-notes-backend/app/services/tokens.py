@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
-from app.models import RefreshToken
+from app.models import PasswordResetToken, RefreshToken
 
 log = logging.getLogger("app.tokens")
 
@@ -91,3 +91,38 @@ async def revoke_all_for_user(db: AsyncSession, user_id: str) -> None:
         .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
         .values(revoked_at=_now())
     )
+
+
+# ----------------------------------------------------------- password reset
+
+class ResetError(Exception):
+    """Reset token unknown, expired, or already used. Message is safe to show."""
+
+
+async def issue_reset_token(db: AsyncSession, user_id: str) -> str:
+    """Create a single-use reset token; any earlier unused ones stop working."""
+    await db.execute(
+        update(PasswordResetToken)
+        .where(PasswordResetToken.user_id == user_id, PasswordResetToken.used_at.is_(None))
+        .values(used_at=_now())
+    )
+    raw = secrets.token_urlsafe(32)
+    db.add(PasswordResetToken(
+        user_id=user_id,
+        token_hash=_hash(raw),
+        expires_at=_now() + timedelta(minutes=settings.RESET_TOKEN_MINUTES),
+    ))
+    await db.flush()
+    return raw
+
+
+async def consume_reset_token(db: AsyncSession, raw: str) -> str:
+    """Validate and burn a reset token. Returns the user id."""
+    row = await db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash == _hash(raw)))
+    if row is None or row.used_at is not None:
+        raise ResetError("This reset link is invalid or has already been used.")
+    if _aware(row.expires_at) <= _now():
+        raise ResetError("This reset link has expired. Request a new one.")
+    row.used_at = _now()
+    await db.flush()
+    return row.user_id

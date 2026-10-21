@@ -16,6 +16,7 @@ os.environ.update({
     "RATE_AUTH_PER_MIN": "1000",
     "RATE_LLM_PER_MIN": "1000",
     "RATE_STREAMS_PER_MIN": "1000",
+    "RATE_RESET_PER_MIN": "1000",
     "LOG_LEVEL": "WARNING",
 })
 
@@ -35,7 +36,7 @@ async def _fresh_state():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    for lim in (ratelimit.auth_limiter, ratelimit.llm_limiter, ratelimit.stream_limiter):
+    for lim in (ratelimit.auth_limiter, ratelimit.llm_limiter, ratelimit.stream_limiter, ratelimit.reset_limiter):
         lim._hits.clear()
     dictate._active_streams.clear()
     yield
@@ -51,6 +52,19 @@ def fake_llm(monkeypatch):
         return dict(FAKE_SUMMARY)
     monkeypatch.setattr("app.routes.notes.summarize_transcript", fake)
     monkeypatch.setattr("app.routes.summarizer.summarize_transcript", fake)
+
+
+@pytest.fixture(autouse=True)
+def outbox(monkeypatch):
+    """Captures password-reset emails instead of sending. Each entry is
+    {"to", "subject", "text", "html"}."""
+    sent: list[dict] = []
+
+    async def fake_send(to, subject, text, html=None):
+        sent.append({"to": to, "subject": subject, "text": text, "html": html})
+
+    monkeypatch.setattr("app.routes.auth.send_email", fake_send)
+    return sent
 
 
 @pytest_asyncio.fixture

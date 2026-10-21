@@ -13,6 +13,19 @@ class Settings(BaseSettings):
     # stored server-side and rotated on every use, so they can be long-lived.
     ACCESS_TOKEN_MINUTES: int = 30
     REFRESH_TOKEN_DAYS: int = 30
+    RESET_TOKEN_MINUTES: int = 30
+
+    # Email. "console" logs each message instead of sending (dev, tests);
+    # "smtp" delivers through SMTP_HOST using the credentials below.
+    EMAIL_BACKEND: str = "console"
+    EMAIL_FROM: str = "Voice Notes <noreply@example.com>"
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_SECURITY: str = "starttls"         # starttls (587) | ssl (465) | none (local relay)
+    # Where password-reset links point: the deployed frontend origin in prod.
+    FRONTEND_URL: str = "http://localhost:5173"
 
     # Logging. LOG_FORMAT=json for production log shippers, text for a terminal.
     LOG_LEVEL: str = "INFO"
@@ -30,6 +43,7 @@ class Settings(BaseSettings):
     MAX_DICTATION_SECONDS: int = 600        # one WebSocket session
     MAX_STREAMS_PER_USER: int = 2           # concurrent dictation sessions
     RATE_AUTH_PER_MIN: int = 10             # login/signup attempts per IP
+    RATE_RESET_PER_MIN: int = 3             # password-reset emails per IP and per address
     RATE_LLM_PER_MIN: int = 20              # summarize + note creation per user
     RATE_STREAMS_PER_MIN: int = 10          # new dictation sessions per user
 

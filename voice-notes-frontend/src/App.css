@@ -326,9 +326,15 @@
   box-shadow: 0 0 0 3px var(--accent-bg);
 }
 .auth-switch {
-  margin-top: 18px;
+  margin-top: 14px;
   text-align: center;
   font-size: 14px;
+}
+.auth-switch + .auth-switch {
+  margin-top: 8px;
+}
+.auth-card .alert {
+  margin-top: 16px;
 }
 
 @media (max-width: 640px) {

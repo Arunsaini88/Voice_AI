@@ -35,6 +35,18 @@ class RefreshToken(Base):
     revoked_at = Column(DateTime(timezone=True))
 
 
+class PasswordResetToken(Base):
+    """Single-use, short-lived. Hash only, like refresh tokens. Issuing a new
+    one marks the user's older unused ones as used."""
+    __tablename__ = "password_reset_tokens"
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String, nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    used_at = Column(DateTime(timezone=True))
+
+
 class Note(Base):
     __tablename__ = "notes"
     id = Column(String, primary_key=True, default=_uuid)

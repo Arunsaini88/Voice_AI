@@ -81,6 +81,11 @@ All settings live in `voice-notes-backend/.env`. Defaults are tuned for a single
 | `GROQ_MODEL` | `qwen/qwen3.8-27b` | Groq retires models without notice; swap here, not in code |
 | `ACCESS_TOKEN_MINUTES` | `30` | Access token (JWT) lifetime |
 | `REFRESH_TOKEN_DAYS` | `30` | Refresh token lifetime; rotated on every use |
+| `RESET_TOKEN_MINUTES` | `30` | Password-reset link lifetime |
+| `EMAIL_BACKEND` | `console` | `console` logs the reset email; `smtp` sends it via `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_SECURITY` |
+| `EMAIL_FROM` | `Voice Notes <noreply@example.com>` | Sender address |
+| `FRONTEND_URL` | `http://localhost:5173` | Base of the reset link in the email |
+| `RATE_RESET_PER_MIN` | `3` | Reset emails per IP and per address |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins. Set to the deployed frontend URL |
 | `TRUST_PROXY_HEADERS` | `false` | Read `X-Forwarded-For` for per-IP limits. Only behind your own proxy |
 | `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | `json` for log shippers |
@@ -101,6 +106,8 @@ All routes except `/health` and the four `/auth/*` POSTs need `Authorization: Be
 | `POST` | `/auth/login` | Same shape. Wrong password and unknown email give the same 401 |
 | `POST` | `/auth/refresh` | `{refresh_token}` → new pair. The old refresh token is revoked; replaying it revokes the whole session |
 | `POST` | `/auth/logout` | `{refresh_token}` → 204. Revokes it |
+| `POST` | `/auth/forgot-password` | `{email}` → 202 with the same message whether or not the account exists. Emails a 30-minute link |
+| `POST` | `/auth/reset-password` | `{token, password}` → 204. Single use; logs the user out everywhere |
 | `GET` | `/auth/me` | `{id, email}` |
 | `WS` | `/dictate/stream?lang=en\|hi\|hinglish&token=…` | Send audio bytes, then `{"type":"stop"}`. See the protocol in `docs/DEVELOPMENT.md` |
 | `POST` | `/notes` | `{transcript, language}` → summarized and saved note |
@@ -134,10 +141,11 @@ python test_client.py test_audio_hinglish.wav hinglish # Hinglish WAV
 1. **Database**: any Postgres. Neon's connection string works unchanged.
 2. **Backend**: build `voice-notes-backend/Dockerfile`, supply the variables from `.env.production.example`. The entrypoint runs migrations, then uvicorn on `$PORT` (default 8000). Set `TRUST_PROXY_HEADERS=true` only behind a proxy you control. Keep one worker unless rate limits move to Redis.
 3. **Frontend**: build `voice-notes-frontend/Dockerfile` with `--build-arg VITE_API_URL=https://<backend host>`, or run `VITE_API_URL=... npm run build` and host `dist/` on any static host. The page must be served over HTTPS for the microphone to work.
-4. **CORS**: set the backend's `CORS_ORIGINS` to the frontend's exact origin.
+4. **CORS**: set the backend's `CORS_ORIGINS` to the frontend's exact origin, and `FRONTEND_URL` to the same value so reset links open the right site.
+5. **Email**: set `EMAIL_BACKEND=smtp` with your provider's SMTP relay. Every transactional provider (SendGrid, Postmark, SES, Mailgun, Resend) offers one; port 587 with STARTTLS is the usual pairing. With the default `console` backend, reset links only appear in the backend log.
 
 CI runs on every push: backend tests, a migration round-trip, frontend lint and build, and both Docker images.
 
 ## Status
 
-Ready for a private beta: hardened, deployable, with a light and dark themed UI. Not yet done: password reset, token refresh, Redis-backed limits for multi-instance. See the roadmap in `docs/DEVELOPMENT.md`.
+Ready for a private beta: hardened, deployable, with accounts, session refresh, password reset, and a light and dark themed UI. Not yet done: Redis-backed limits for multi-instance, frontend unit tests. See the roadmap in `docs/DEVELOPMENT.md`.

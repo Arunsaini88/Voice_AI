@@ -3,7 +3,7 @@ import { useState, type FormEvent } from "react";
 import { authenticate, type AuthMode } from "./auth";
 import Brand from "./Brand";
 
-export default function Login({ onLogin }: { onLogin: () => void }) {
+export default function Login({ onLogin, onForgot }: { onLogin: () => void; onForgot: () => void }) {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -62,6 +62,11 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         {error && <p className="alert alert-error" role="alert">{error}</p>}
 
+        {mode === "login" && (
+          <p className="auth-switch">
+            <button type="button" className="btn-link" onClick={onForgot}>Forgot password?</button>
+          </p>
+        )}
         <p className="auth-switch">
           {mode === "login" ? "No account yet? " : "Already have an account? "}
           <button

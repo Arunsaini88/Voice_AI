@@ -4,6 +4,7 @@ import { AUTH_EXPIRED, useDictation } from "./hooks/useDictation";
 import { AuthExpired, authFetch, logout as endSession, restoreSession } from "./auth";
 import Brand from "./Brand";
 import Login from "./Login";
+import { ForgotPassword, ResetPassword } from "./PasswordReset";
 import "./App.css";
 
 type Language = "en" | "hi" | "hinglish";
@@ -20,9 +21,17 @@ type Note = {
   created_at: string;
 };
 
-type Session = "restoring" | "out" | "in";
+type Session = "restoring" | "out" | "forgot" | "in";
+
+// The only deep link the app has is the emailed reset link, so a full router
+// would be overkill: read the path once at startup.
+function resetTokenFromUrl(): string | null {
+  if (window.location.pathname !== "/reset-password") return null;
+  return new URLSearchParams(window.location.search).get("token") ?? "";
+}
 
 export default function App() {
+  const [resetToken, setResetToken] = useState<string | null>(resetTokenFromUrl);
   // On load, a stored refresh token is traded for a live access token before
   // anything renders, so a reload never flashes the login screen.
   const [session, setSession] = useState<Session>("restoring");
@@ -36,8 +45,16 @@ export default function App() {
     setSession("out");
   }, []);
 
+  const leaveReset = useCallback(() => {
+    window.history.replaceState(null, "", "/");
+    setResetToken(null);
+    setSession("out");
+  }, []);
+
+  if (resetToken !== null) return <ResetPassword token={resetToken} onDone={leaveReset} />;
   if (session === "restoring") return null;
-  if (session === "out") return <Login onLogin={() => setSession("in")} />;
+  if (session === "forgot") return <ForgotPassword onBack={() => setSession("out")} />;
+  if (session === "out") return <Login onLogin={() => setSession("in")} onForgot={() => setSession("forgot")} />;
   return <Workspace onLogout={logout} />;
 }
 
