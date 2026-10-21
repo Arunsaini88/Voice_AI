@@ -1,16 +1,33 @@
-# Local production-like stack: backend on :8000, frontend on :8080.
+# Local production-like stack: backend on :8000, frontend on :8080, Redis for
+# shared rate limits so the backend can run with several workers.
 #   docker compose up --build
 # Backend secrets come from voice-notes-backend/.env (copy .env.example).
 # The frontend origin is injected into CORS so the two can talk.
 services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   backend:
     build: ./voice-notes-backend
     env_file: ./voice-notes-backend/.env
     environment:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
       LOG_FORMAT: ${LOG_FORMAT:-text}
+      REDIS_URL: redis://redis:6379/0
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
     ports:
       - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:

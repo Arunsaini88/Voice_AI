@@ -25,7 +25,7 @@ Backend layout, `voice-notes-backend/app/`:
 | `models.py` | `users`, `notes` |
 | `deps.py` | JWT create and decode, `get_current_user` |
 | `schemas.py` | Shared request shape for anything carrying a transcript |
-| `ratelimit.py` | In-process sliding-window limiters and their dependencies |
+| `ratelimit.py` | Sliding-window limiters and stream slots, memory or Redis, plus their dependencies |
 | `logging_config.py` | Text or JSON formatter; uvicorn routed through it |
 | `routes/auth.py` | Signup, login, me |
 | `routes/dictate.py` | The WebSocket |
@@ -99,9 +99,16 @@ Deepgram's SDK invokes callbacks on its own thread. Anything raised there is los
 
 ## Rate limits
 
-`ratelimit.RateLimiter` keeps a deque of timestamps per key in memory. One uvicorn process means one set of counters; with several workers or instances each allows the full limit on its own. Move counters to Redis before scaling out.
+`ratelimit.py` has two backends behind one async interface, picked at import from `REDIS_URL`:
+
+- **Memory** (`MemoryRateLimiter`, `MemoryStreamSlots`): a deque of timestamps per key. Correct for exactly one uvicorn worker.
+- **Redis** (`RedisRateLimiter`, `RedisStreamSlots`): a sorted set per key with server time as the score, updated by one Lua script per check, so the read-prune-count-add sequence is atomic across workers and instances. Keys are `rl:<limiter>:<key>` with a TTL of one window, and `slots:<user>` for open dictation sessions with a safety TTL slightly longer than `MAX_DICTATION_SECONDS`, so a crashed worker cannot pin a slot forever. If Redis is unreachable, `RATE_LIMIT_FAIL_OPEN` decides between letting traffic through (default, logged) and answering 429.
+
+Callers `await limiter.hit(key)` and get `None` or the seconds to wait. The route modules reference `ratelimit.<name>` through the module, so a test can swap a limiter by patching `app.ratelimit`.
 
 The LLM limiter declares the request body as a dependency so FastAPI validates the body first: a malformed request gets its 422 without consuming a slot. Keep that pattern if you add limiters elsewhere.
+
+`tests/test_ratelimit_redis.py` runs against a real Redis when `REDIS_TEST_URL` is set (CI starts one as a service; locally `docker run -d --rm -p 6379:6379 redis:7-alpine`) and is skipped otherwise.
 
 Per-IP limits use the socket address unless `TRUST_PROXY_HEADERS=true`, in which case the first `X-Forwarded-For` entry is used. Only enable that behind a proxy you control.
 
@@ -147,13 +154,13 @@ Rules of thumb:
 - Every revision needs a working `downgrade`. CI runs upgrade, downgrade, upgrade on SQLite.
 - The first revision uses `IF NOT EXISTS` because the Neon database predates Alembic. Later revisions should not need that.
 - Revision 0002 adds the notes foreign key inside `batch_alter_table`, which SQLite needs (it rebuilds the table) and Postgres tolerates (plain ALTER).
-- The Docker entrypoint runs `alembic upgrade head` before uvicorn, so deploying a new image migrates the database. With one backend instance that is safe; with several, run the migration as a separate release step instead.
+- The Docker entrypoint runs `alembic upgrade head` before uvicorn, so deploying a new image migrates the database. With one backend container that is safe (the workers share it); with several containers, run the migration as a separate release step instead.
 
 ## Docker and CI
 
 - `voice-notes-backend/Dockerfile`: python:3.12-slim, non-root user, healthcheck on `/health`, `LOG_FORMAT=json` by default. `docker-entrypoint.sh` migrates, then starts uvicorn on `$PORT` with `$WEB_CONCURRENCY` workers; it adds `--proxy-headers` only when `TRUST_PROXY_HEADERS=true`.
 - `voice-notes-frontend/Dockerfile`: two-stage, node build then nginx with SPA fallback and long-cache headers for hashed assets. `VITE_API_URL` is a build arg because Vite inlines it.
-- `docker-compose.yml` wires the two together on :8000 and :8080 and injects the frontend origin into `CORS_ORIGINS`.
+- `docker-compose.yml` wires the two together on :8000 and :8080, injects the frontend origin into `CORS_ORIGINS`, and adds a Redis service so the backend runs with two workers.
 - `.github/workflows/ci.yml` runs the backend tests, a migration round-trip, frontend lint and build, then builds both images. No secrets needed.
 - `.gitattributes` forces LF on `*.sh` so the entrypoint survives a Windows checkout.
 
@@ -165,13 +172,12 @@ Rules of thumb:
 
 ## Roadmap
 
-Done: authentication, rate limits and caps, logging and failure handling, test suite, Docker images, migrations, CI, frontend styling with light and dark themes.
+Done: authentication with refresh tokens and password reset, rate limits and caps (memory or Redis), logging and failure handling, test suite, Docker images, migrations, CI, frontend styling with light and dark themes.
 
 Remaining before a public launch:
 
-1. Redis-backed rate limits when running more than one instance.
-2. Frontend unit tests (vitest) for `useDictation` and `auth.ts`.
-3. Change-password and delete-account from inside the app.
+1. Frontend unit tests (vitest) for `useDictation` and `auth.ts`.
+2. Change-password and delete-account from inside the app.
 
 ### Checking the UI without a browser session
 

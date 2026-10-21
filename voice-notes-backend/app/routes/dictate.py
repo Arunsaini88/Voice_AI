@@ -5,7 +5,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
 from app.config import settings
 from app.deps import user_from_token
-from app.ratelimit import stream_limiter
+from app import ratelimit
 from app.services.romanize import romanize_if_needed
 
 router = APIRouter()
@@ -23,10 +23,6 @@ DEEPGRAM_LANG_MAP = {
 WS_UNAUTHORIZED = 1008
 WS_SERVER_ERROR = 1011
 WS_TOO_MANY = 4429
-
-# Open sessions per user id, so one account can't fan out N Deepgram streams.
-_active_streams: dict[str, int] = {}
-
 
 @router.websocket("/dictate/stream")
 async def dictate_stream(
@@ -49,22 +45,20 @@ async def dictate_stream(
         await websocket.close(code=WS_UNAUTHORIZED, reason="Unauthorized")
         return
     uid = user["id"]
-    if stream_limiter.retry_after(uid) is not None:
+    if await ratelimit.stream_limiter.hit(uid) is not None:
         log.warning("stream rate-limited", extra={"user_id": uid})
         await websocket.close(code=WS_TOO_MANY, reason="Too many recordings started. Wait a minute.")
         return
-    if _active_streams.get(uid, 0) >= settings.MAX_STREAMS_PER_USER:
+    # One slot per open session, so one account can't fan out N Deepgram streams.
+    if not await ratelimit.stream_slots.acquire(uid, settings.MAX_STREAMS_PER_USER):
         log.warning("stream concurrency-limited", extra={"user_id": uid})
         await websocket.close(code=WS_TOO_MANY, reason="Too many recordings open at once")
         return
 
-    _active_streams[uid] = _active_streams.get(uid, 0) + 1
     try:
         await _run_stream(websocket, uid, lang, encoding, sample_rate)
     finally:
-        _active_streams[uid] -= 1
-        if _active_streams[uid] <= 0:
-            del _active_streams[uid]
+        await ratelimit.stream_slots.release(uid)
 
 
 async def _run_stream(websocket: WebSocket, uid: str, lang: str, encoding: str | None, sample_rate: int | None):

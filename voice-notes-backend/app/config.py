@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     # spoof X-Forwarded-For and dodge the per-IP limits.
     TRUST_PROXY_HEADERS: bool = False
 
+    # Rate-limit state. Unset: in-process counters (one instance only).
+    # Set (redis://host:6379/0): shared counters, safe for several workers
+    # or instances. If Redis is unreachable, FAIL_OPEN=true lets requests
+    # through (and logs); false refuses them with 429 until it is back.
+    REDIS_URL: str | None = None
+    RATE_LIMIT_FAIL_OPEN: bool = True
+
     # Abuse / cost caps. Every LLM and transcription call costs money.
     MAX_TRANSCRIPT_CHARS: int = 20_000      # POST /notes and /llm/summarize
     MAX_DICTATION_SECONDS: int = 600        # one WebSocket session

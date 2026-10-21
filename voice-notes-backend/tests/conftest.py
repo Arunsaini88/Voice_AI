@@ -27,7 +27,6 @@ from app import ratelimit         # noqa: E402
 from app.db import engine         # noqa: E402
 from app.main import app          # noqa: E402
 from app.models import Base       # noqa: E402
-from app.routes import dictate    # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -36,9 +35,9 @@ async def _fresh_state():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    for lim in (ratelimit.auth_limiter, ratelimit.llm_limiter, ratelimit.stream_limiter, ratelimit.reset_limiter):
-        lim._hits.clear()
-    dictate._active_streams.clear()
+    for lim in (ratelimit.auth_limiter, ratelimit.llm_limiter, ratelimit.stream_limiter,
+                ratelimit.reset_limiter, ratelimit.stream_slots):
+        lim.reset()
     yield
 
 

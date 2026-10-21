@@ -6,6 +6,7 @@
 import json, pathlib, wave
 import pytest
 from fastapi.testclient import TestClient
+from app import ratelimit
 from app.config import settings
 from app.deps import create_access_token
 from app.main import app
@@ -143,13 +144,11 @@ def test_concurrent_stream_cap(ws_client, token, fake_deepgram, monkeypatch):
         assert "4429" in str(exc.value) or getattr(exc.value, "code", None) == 4429
         first.send_text(json.dumps({"type": "stop"}))
         _drain(first)
-    assert dictate._active_streams == {}  # counter released
+    assert ratelimit.stream_slots._counts == {}  # slot released
 
 
 def test_stream_rate_limit(ws_client, token, fake_deepgram, monkeypatch):
-    from app.ratelimit import RateLimiter
-    # dictate imported the limiter by name, so patch its binding, not ratelimit's.
-    monkeypatch.setattr(dictate, "stream_limiter", RateLimiter(1, 60))
+    monkeypatch.setattr(ratelimit, "stream_limiter", ratelimit.MemoryRateLimiter(1, 60))
     with ws_client.websocket_connect(f"/dictate/stream?lang=en&token={token}") as ws:
         ws.send_text(json.dumps({"type": "stop"}))
         _drain(ws)
@@ -166,7 +165,7 @@ def test_client_disconnect_without_stop_still_flushes(ws_client, token, fake_dee
     # loop after that, so give it a moment rather than racing it.
     import time
     deadline = time.monotonic() + 3
-    while not (fake_deepgram.finished and dictate._active_streams == {}) and time.monotonic() < deadline:
+    while not (fake_deepgram.finished and ratelimit.stream_slots._counts == {}) and time.monotonic() < deadline:
         time.sleep(0.02)
     assert fake_deepgram.finished
-    assert dictate._active_streams == {}
+    assert ratelimit.stream_slots._counts == {}

@@ -180,7 +180,7 @@ async def forgot_password(payload: ForgotIn, tasks: BackgroundTasks, db: AsyncSe
     """Always 202 with the same body, so the response can't be used to find
     out which emails are registered. Mail goes out in a background task so the
     timing is the same either way."""
-    if not reset_allowed_for_email(payload.email):
+    if not await reset_allowed_for_email(payload.email):
         return _RESET_REPLY                       # silently drop: address is being hammered
     user = await db.scalar(select(User).where(User.email == payload.email))
     if user is not None:

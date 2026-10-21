@@ -1,41 +1,53 @@
-# tests/test_ratelimit.py
+# tests/test_ratelimit.py — in-memory backend and the HTTP dependencies.
 import pytest
 from app import ratelimit
-from app.ratelimit import RateLimiter
+from app.ratelimit import MemoryRateLimiter, MemoryStreamSlots
 
 NOTE = {"transcript": "Buy milk.", "language": "en"}
 
 
-def test_sliding_window(monkeypatch):
+async def test_sliding_window(monkeypatch):
     now = [1000.0]
     monkeypatch.setattr(ratelimit.time, "monotonic", lambda: now[0])
-    lim = RateLimiter(limit=2, window_seconds=60)
+    lim = MemoryRateLimiter(limit=2, window_seconds=60)
 
-    assert lim.retry_after("k") is None
-    assert lim.retry_after("k") is None
-    wait = lim.retry_after("k")
-    assert wait == pytest.approx(60)            # blocked until the first hit ages out
-    assert lim.retry_after("other") is None     # keys are independent
+    assert await lim.hit("k") is None
+    assert await lim.hit("k") is None
+    assert await lim.hit("k") == pytest.approx(60)      # blocked until the first hit ages out
+    assert await lim.hit("other") is None               # keys are independent
 
     now[0] += 30
-    assert lim.retry_after("k") == pytest.approx(30)
+    assert await lim.hit("k") == pytest.approx(30)
     now[0] += 31
-    assert lim.retry_after("k") is None         # first hit expired, slot freed
+    assert await lim.hit("k") is None                   # first hit expired, slot freed
 
 
-def test_prune_keeps_memory_bounded(monkeypatch):
+async def test_prune_keeps_memory_bounded(monkeypatch):
     now = [0.0]
     monkeypatch.setattr(ratelimit.time, "monotonic", lambda: now[0])
-    lim = RateLimiter(limit=1, window_seconds=10)
+    lim = MemoryRateLimiter(limit=1, window_seconds=10)
     for i in range(10_001):
-        lim.retry_after(f"ip-{i}")
+        await lim.hit(f"ip-{i}")
     now[0] += 11
-    lim.retry_after("fresh")                    # crosses the prune threshold with everything stale
+    await lim.hit("fresh")                              # crosses the prune threshold with everything stale
     assert len(lim._hits) < 100
 
 
+async def test_stream_slots():
+    slots = MemoryStreamSlots()
+    assert await slots.acquire("u", 2) and await slots.acquire("u", 2)
+    assert not await slots.acquire("u", 2)
+    assert await slots.acquire("other", 2)
+    await slots.release("u")
+    assert await slots.acquire("u", 2)
+    for _ in range(3):
+        await slots.release("u")
+    await slots.release("u")                            # over-release is harmless
+    assert slots._counts.get("u") is None
+
+
 async def test_auth_limit_per_ip(client, monkeypatch):
-    monkeypatch.setattr(ratelimit, "auth_limiter", RateLimiter(2, 60))
+    monkeypatch.setattr(ratelimit, "auth_limiter", MemoryRateLimiter(2, 60))
     creds = {"email": "dave@example.com", "password": "correct-horse-battery"}
     assert (await client.post("/auth/signup", json=creds)).status_code == 201
     assert (await client.post("/auth/login", json=creds)).status_code == 200
@@ -45,14 +57,14 @@ async def test_auth_limit_per_ip(client, monkeypatch):
 
 
 async def test_llm_limit_shared_by_notes_and_summarize(client, user, monkeypatch):
-    monkeypatch.setattr(ratelimit, "llm_limiter", RateLimiter(2, 60))
+    monkeypatch.setattr(ratelimit, "llm_limiter", MemoryRateLimiter(2, 60))
     assert (await client.post("/llm/summarize", json=NOTE, headers=user.headers)).status_code == 200
     assert (await client.post("/notes", json=NOTE, headers=user.headers)).status_code == 201
     assert (await client.post("/notes", json=NOTE, headers=user.headers)).status_code == 429
 
 
 async def test_invalid_body_does_not_consume_llm_quota(client, user, monkeypatch):
-    monkeypatch.setattr(ratelimit, "llm_limiter", RateLimiter(1, 60))
+    monkeypatch.setattr(ratelimit, "llm_limiter", MemoryRateLimiter(1, 60))
     for _ in range(3):
         r = await client.post("/notes", json={"transcript": "", "language": "en"}, headers=user.headers)
         assert r.status_code == 422
@@ -60,7 +72,7 @@ async def test_invalid_body_does_not_consume_llm_quota(client, user, monkeypatch
 
 
 async def test_llm_limit_is_per_user(client, user, other_user, monkeypatch):
-    monkeypatch.setattr(ratelimit, "llm_limiter", RateLimiter(1, 60))
+    monkeypatch.setattr(ratelimit, "llm_limiter", MemoryRateLimiter(1, 60))
     assert (await client.post("/notes", json=NOTE, headers=user.headers)).status_code == 201
     assert (await client.post("/notes", json=NOTE, headers=user.headers)).status_code == 429
     assert (await client.post("/notes", json=NOTE, headers=other_user.headers)).status_code == 201

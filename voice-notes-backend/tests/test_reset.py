@@ -97,12 +97,12 @@ async def test_weak_password_rejected_without_burning_token(client, user, outbox
 
 
 async def test_rate_limits(client, user, outbox, monkeypatch):
-    lim = ratelimit.RateLimiter(2, 60)
+    lim = ratelimit.MemoryRateLimiter(2, 60)
     monkeypatch.setattr(ratelimit, "reset_limiter", lim)
     # Per-address: pre-fill the address's slots (as other clients would have),
     # then a request for it is silently dropped: 202, no mail.
-    lim.retry_after("email:" + user.email)
-    lim.retry_after("email:" + user.email)
+    await lim.hit("email:" + user.email)
+    await lim.hit("email:" + user.email)
     assert (await _forgot(client, user.email)).status_code == 202
     assert outbox == []
     # Per-IP: second request from this client still goes through...

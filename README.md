@@ -60,7 +60,7 @@ Open the page via `http://localhost`, not a LAN IP: the microphone API only exis
 ### Docker
 
 ```bash
-docker compose up --build       # backend on :8000, frontend on :8080
+docker compose up --build       # backend on :8000, frontend on :8080, plus Redis
 ```
 
 Backend secrets are read from `voice-notes-backend/.env`. The backend container runs migrations on every start. The frontend image bakes the API URL in at build time: set `VITE_API_URL` in the environment (or `--build-arg VITE_API_URL=...` for a plain `docker build`).
@@ -88,6 +88,8 @@ All settings live in `voice-notes-backend/.env`. Defaults are tuned for a single
 | `RATE_RESET_PER_MIN` | `3` | Reset emails per IP and per address |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins. Set to the deployed frontend URL |
 | `TRUST_PROXY_HEADERS` | `false` | Read `X-Forwarded-For` for per-IP limits. Only behind your own proxy |
+| `REDIS_URL` | unset | Shared rate-limit counters. Required for more than one worker or instance |
+| `RATE_LIMIT_FAIL_OPEN` | `true` | If Redis is down: let requests through (`true`) or answer 429 (`false`) |
 | `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | `json` for log shippers |
 | `MAX_TRANSCRIPT_CHARS` | `20000` | Cap on text sent for summarization |
 | `MAX_DICTATION_SECONDS` | `600` | Cap on one recording session |
@@ -139,7 +141,7 @@ python test_client.py test_audio_hinglish.wav hinglish # Hinglish WAV
 ## Deploying
 
 1. **Database**: any Postgres. Neon's connection string works unchanged.
-2. **Backend**: build `voice-notes-backend/Dockerfile`, supply the variables from `.env.production.example`. The entrypoint runs migrations, then uvicorn on `$PORT` (default 8000). Set `TRUST_PROXY_HEADERS=true` only behind a proxy you control. Keep one worker unless rate limits move to Redis.
+2. **Backend**: build `voice-notes-backend/Dockerfile`, supply the variables from `.env.production.example`. The entrypoint runs migrations, then uvicorn on `$PORT` (default 8000). Set `TRUST_PROXY_HEADERS=true` only behind a proxy you control. For more than one worker or instance, set `REDIS_URL` so rate limits are shared.
 3. **Frontend**: build `voice-notes-frontend/Dockerfile` with `--build-arg VITE_API_URL=https://<backend host>`, or run `VITE_API_URL=... npm run build` and host `dist/` on any static host. The page must be served over HTTPS for the microphone to work.
 4. **CORS**: set the backend's `CORS_ORIGINS` to the frontend's exact origin, and `FRONTEND_URL` to the same value so reset links open the right site.
 5. **Email**: set `EMAIL_BACKEND=smtp` with your provider's SMTP relay. Every transactional provider (SendGrid, Postmark, SES, Mailgun, Resend) offers one; port 587 with STARTTLS is the usual pairing. With the default `console` backend, reset links only appear in the backend log.
@@ -148,4 +150,4 @@ CI runs on every push: backend tests, a migration round-trip, frontend lint and 
 
 ## Status
 
-Ready for a private beta: hardened, deployable, with accounts, session refresh, password reset, and a light and dark themed UI. Not yet done: Redis-backed limits for multi-instance, frontend unit tests. See the roadmap in `docs/DEVELOPMENT.md`.
+Ready for a private beta: hardened, deployable, horizontally scalable with Redis, with accounts, session refresh, password reset, and a light and dark themed UI. Not yet done: frontend unit tests, in-app change-password. See the roadmap in `docs/DEVELOPMENT.md`.
