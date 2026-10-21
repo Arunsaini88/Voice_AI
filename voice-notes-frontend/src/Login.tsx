@@ -1,6 +1,7 @@
 // src/Login.tsx
 import { useState, type FormEvent } from "react";
 import { authenticate, type AuthMode } from "./auth";
+import Brand from "./Brand";
 
 export default function Login({ onLogin }: { onLogin: (token: string) => void }) {
   const [mode, setMode] = useState<AuthMode>("login");
@@ -23,41 +24,54 @@ export default function Login({ onLogin }: { onLogin: (token: string) => void })
   };
 
   return (
-    <div style={{ maxWidth: 360, margin: "80px auto", fontFamily: "sans-serif" }}>
-      <h1 style={{ fontSize: 22 }}>Voice Notes</h1>
-      <form onSubmit={submit} style={{ display: "grid", gap: 10 }}>
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoComplete="email"
-          required
-        />
-        <input
-          type="password"
-          placeholder={mode === "signup" ? "Password (8+ characters)" : "Password"}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete={mode === "signup" ? "new-password" : "current-password"}
-          minLength={8}
-          required
-        />
-        <button type="submit" disabled={busy}>
-          {busy ? "Please wait…" : mode === "login" ? "Log in" : "Create account"}
-        </button>
-      </form>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
-      <p style={{ fontSize: 14, opacity: 0.7 }}>
-        {mode === "login" ? "No account yet? " : "Already have an account? "}
-        <button
-          type="button"
-          onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(null); }}
-          style={{ background: "none", border: "none", padding: 0, color: "inherit", textDecoration: "underline", cursor: "pointer" }}
-        >
-          {mode === "login" ? "Sign up" : "Log in"}
-        </button>
-      </p>
+    <div className="auth">
+      <div className="auth-card">
+        <Brand />
+        <p className="auth-sub">Dictate in English, Hindi, or Hinglish. Get a summary you can keep.</p>
+
+        <form onSubmit={submit} className="form">
+          <label className="field">
+            Email
+            <input
+              className="input"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
+            />
+          </label>
+          <label className="field">
+            Password
+            <input
+              className="input"
+              type="password"
+              placeholder={mode === "signup" ? "At least 8 characters" : ""}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={mode === "signup" ? "new-password" : "current-password"}
+              minLength={8}
+              required
+            />
+          </label>
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            {busy ? "Please wait…" : mode === "login" ? "Log in" : "Create account"}
+          </button>
+        </form>
+
+        {error && <p className="alert alert-error" role="alert">{error}</p>}
+
+        <p className="auth-switch">
+          {mode === "login" ? "No account yet? " : "Already have an account? "}
+          <button
+            type="button"
+            className="btn-link"
+            onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(null); }}
+          >
+            {mode === "login" ? "Sign up" : "Log in"}
+          </button>
+        </p>
+      </div>
     </div>
   );
 }

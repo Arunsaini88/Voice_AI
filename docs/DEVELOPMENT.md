@@ -41,8 +41,11 @@ Frontend, `voice-notes-frontend/src/`:
 |---|---|
 | `App.tsx` | Login gate, language picker, record button, notes list |
 | `Login.tsx` | Signup and login form |
+| `Brand.tsx` | App name and microphone mark |
 | `auth.ts` | Token storage, `authFetch` wrapper that logs out on 401 |
 | `hooks/useDictation.ts` | Mic capture, WebSocket, stop handshake, error mapping |
+| `index.css` | Color tokens (light and dark), base typography |
+| `App.css` | Component styles: top bar, controls, transcript, notes, auth card |
 
 ## Dictation protocol
 
@@ -154,11 +157,15 @@ Rules of thumb:
 
 ## Roadmap
 
-Done: authentication, rate limits and caps, logging and failure handling, test suite, Docker images, migrations, CI.
+Done: authentication, rate limits and caps, logging and failure handling, test suite, Docker images, migrations, CI, frontend styling with light and dark themes.
 
 Remaining before a public launch:
 
-1. Frontend polish: move inline styles to the existing stylesheets, real page title.
-2. Password reset and token refresh.
-3. Redis-backed rate limits when running more than one instance.
-4. Foreign key from notes to users once the pre-auth rows are cleaned up.
+1. Password reset and token refresh.
+2. Redis-backed rate limits when running more than one instance.
+3. Foreign key from notes to users once the pre-auth rows are cleaned up.
+4. Frontend unit tests (vitest) for `useDictation` and `auth.ts`.
+
+### Checking the UI without a browser session
+
+Headless Chrome can drive the dev server over the DevTools protocol: start the backend and `npm run dev`, create a user and a couple of notes through the API, then set `localStorage["voice-notes-token"]` via `Runtime.evaluate` and call `Page.captureScreenshot`. `Emulation.setEmulatedMedia` toggles `prefers-color-scheme`; `Emulation.setDeviceMetricsOverride` checks the 390px layout for horizontal overflow.

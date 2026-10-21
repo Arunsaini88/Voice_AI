@@ -137,4 +137,4 @@ CI runs on every push: backend tests, a migration round-trip, frontend lint and 
 
 ## Status
 
-Working prototype, hardened for a private beta and deployable. Not yet done: password reset, token refresh, frontend styling, Redis-backed limits for multi-instance. See the roadmap in `docs/DEVELOPMENT.md`.
+Ready for a private beta: hardened, deployable, with a light and dark themed UI. Not yet done: password reset, token refresh, Redis-backed limits for multi-instance. See the roadmap in `docs/DEVELOPMENT.md`.
