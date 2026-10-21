@@ -60,7 +60,7 @@ Frontend, `voice-notes-frontend/src/`:
 | Transport | WebSocket from the page | WebSocket from Rust (`tokio-tungstenite`), `encoding=linear16` |
 | Transcript events | `ws.onmessage` | Tauri events named `dictation`, same JSON, plus `closed` |
 | Server URL | baked `VITE_API_URL` | user-entered on the login card, stored in localStorage |
-| Start/stop | buttons | buttons or the global hotkey Ctrl+Shift+M (`hotkey` event) |
+| Start/stop | buttons | buttons or the global hotkey (`hotkey` event); default Ctrl+Shift+M, user-configurable via `set_hotkey`, stored in localStorage and re-applied on launch |
 | Paste | not possible | `paste_text` command: clipboard + Ctrl+V via `enigo`, previous clipboard restored (`paste.rs`) |
 
 Both engines feed the same `handleMessage` in `useDictation.ts`, so the hook's state machine and the stop handshake are shared. In "Type into any app" mode the app hides its own window before pasting so focus returns to the user's program.
@@ -69,7 +69,9 @@ Why capture audio in Rust rather than the webview: WebView2's microphone permiss
 
 Driving the desktop UI for tests: launch with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` and the webview speaks the DevTools protocol like Chrome. Invoke Tauri commands from the console with `window.__TAURI_INTERNALS__.invoke(name, args)`. To check a paste, give a window keyboard focus with `SetForegroundWindow` (do not tap Alt to satisfy the foreground rule: it puts the window in menu mode and eats the next key) and read its contents back.
 
-Known limits: Windows only so far (`enigo` and `arboard` support macOS and Linux, but nothing is tested there); the installer is unsigned, so SmartScreen warns on first run; the hotkey is fixed.
+Hotkey syntax is the global-shortcut crate's: modifiers `Ctrl`, `Shift`, `Alt`, `Super` joined with `+` to a W3C key code (`KeyM`, `F8`, `Space`). The frontend builds it from `KeyboardEvent.code`, refuses a bare letter or digit (it would block typing everywhere), and the Rust side returns an error if Windows refuses the registration because another app owns it. The Fn key never reaches the OS on most laptops, so it cannot be bound; the capture UI says so.
+
+Known limits: Windows only so far (`enigo` and `arboard` support macOS and Linux, but nothing is tested there); the installer is unsigned, so SmartScreen warns on first run.
 
 ## Dictation protocol
 
@@ -197,7 +199,7 @@ Done: authentication with refresh tokens and password reset, rate limits and cap
 
 Remaining before a public launch:
 
-1. Desktop: code-signing certificate, configurable hotkey, macOS and Linux builds, auto-update.
+1. Desktop: code-signing certificate, macOS and Linux builds, auto-update, push-to-talk (hold instead of toggle).
 2. Frontend unit tests (vitest) for `useDictation` and `auth.ts`.
 3. Change-password and delete-account from inside the app.
 

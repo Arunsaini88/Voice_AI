@@ -2,7 +2,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AUTH_EXPIRED, useDictation } from "./hooks/useDictation";
 import { AuthExpired, authFetch, logout as endSession, restoreSession } from "./auth";
-import { hideWindow, isDesktop, microphoneName, onHotkey, pasteIntoFocusedApp } from "./desktop";
+import {
+  comboFromKeyEvent, DEFAULT_HOTKEY, hideWindow, hotkeyNeedsModifier, isDesktop, microphoneName, onHotkey,
+  pasteIntoFocusedApp, prettyHotkey, setHotkey,
+} from "./desktop";
 import Brand from "./Brand";
 import Login from "./Login";
 import { ForgotPassword, ResetPassword } from "./PasswordReset";
@@ -14,6 +17,7 @@ type Mode = "notes" | "type";
 const LANGUAGE_LABEL: Record<string, string> = { en: "English", hi: "Hindi", hinglish: "Hinglish" };
 const MODE_KEY = "voice-notes-mode";
 const SAVE_TYPED_KEY = "voice-notes-save-typed";
+const HOTKEY_KEY = "voice-notes-hotkey";
 
 type Note = {
   id: string;
@@ -90,6 +94,37 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
   const [saving, setSaving] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [hotkey, setHotkeyState] = useState<string>(() => readPref(HOTKEY_KEY, DEFAULT_HOTKEY));
+  const [capturing, setCapturing] = useState(false);
+  const [hotkeyError, setHotkeyError] = useState<string | null>(null);
+  const hotkeyLabel = prettyHotkey(hotkey);
+
+  // Apply the saved hotkey once the shell is up (Rust registered the default at launch).
+  useEffect(() => {
+    if (!desktop || hotkey === DEFAULT_HOTKEY) return;
+    setHotkey(hotkey).catch((e) => setHotkeyError(String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desktop]);
+
+  const captureHotkey = async (e: React.KeyboardEvent) => {
+    e.preventDefault();
+    if (e.key === "Escape") { setCapturing(false); return; }
+    const combo = comboFromKeyEvent(e.nativeEvent);
+    if (!combo) return; // modifier alone: keep waiting for the key
+    if (hotkeyNeedsModifier(combo)) {
+      setHotkeyError(`${prettyHotkey(combo)} on its own would block normal typing. Add Ctrl, Shift or Alt, or use a function key like F8.`);
+      return;
+    }
+    try {
+      await setHotkey(combo);
+      setHotkeyState(combo);
+      writePref(HOTKEY_KEY, combo);
+      setHotkeyError(null);
+      setCapturing(false);
+    } catch (err) {
+      setHotkeyError(String(err));
+    }
+  };
 
   const chooseLanguage = (l: Language) => { setLanguage(l); writePref("voice-notes-lang", l); };
   const chooseMode = (m: Mode) => { setMode(m); writePref(MODE_KEY, m); };
@@ -204,9 +239,9 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       : status === "finishing"
         ? "Waiting for the last sentence…"
         : mode === "type"
-          ? "Put the cursor where you want the text, press Ctrl+Shift+M, speak, press Ctrl+Shift+M again."
+          ? `Put the cursor where you want the text, press ${hotkeyLabel}, speak, press ${hotkeyLabel} again.`
           : desktop
-            ? "Press Start or Ctrl+Shift+M, speak, then Stop. The note is summarized and saved."
+            ? `Press Start or ${hotkeyLabel}, speak, then Stop. The note is summarized and saved.`
             : "Press Start, speak, then Stop. The note is summarized and saved automatically.";
 
   return (
@@ -263,6 +298,40 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           )}
 
           <span className="hint">{hint}</span>
+          {desktop && (
+            <span className="hint hotkey-row">
+              Hotkey:{" "}
+              {capturing ? (
+                <button
+                  type="button"
+                  className="kbd is-capturing"
+                  autoFocus
+                  onKeyDown={captureHotkey}
+                  onBlur={() => setCapturing(false)}
+                >
+                  Press the keys… (Esc to cancel)
+                </button>
+              ) : (
+                <button type="button" className="kbd" onClick={() => { setHotkeyError(null); setCapturing(true); }}
+                        disabled={status !== "idle"} title="Click, then press the key combination you want">
+                  {hotkeyLabel}
+                </button>
+              )}
+              {hotkey !== DEFAULT_HOTKEY && !capturing && (
+                <button type="button" className="btn-link" onClick={async () => {
+                  try { await setHotkey(DEFAULT_HOTKEY); setHotkeyState(DEFAULT_HOTKEY); writePref(HOTKEY_KEY, DEFAULT_HOTKEY); setHotkeyError(null); }
+                  catch (err) { setHotkeyError(String(err)); }
+                }}>reset</button>
+              )}
+            </span>
+          )}
+          {hotkeyError && <span className="hint hint-error">{hotkeyError}</span>}
+          {capturing && (
+            <span className="hint">
+              Tip: the Fn key alone is handled by the keyboard itself and cannot be captured. Fn+F-key usually
+              arrives as the F-key, so press that.
+            </span>
+          )}
           {desktop && micName && <span className="hint">Microphone: {micName}</span>}
           {desktop && micName === null && <span className="hint">No microphone detected.</span>}
         </div>

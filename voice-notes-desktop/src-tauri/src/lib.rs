@@ -11,15 +11,59 @@
 mod dictation;
 mod paste;
 
+use std::str::FromStr;
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, State,
 };
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 pub struct Dictation(Mutex<Option<dictation::Session>>);
+pub struct Hotkey(Mutex<Option<Shortcut>>);
+
+pub const DEFAULT_HOTKEY: &str = "Ctrl+Shift+KeyM";
+const TRAY_ID: &str = "main";
+
+/// Register `combo` as the global start/stop hotkey, replacing the previous
+/// one. Accepts the global-shortcut syntax: modifiers `Ctrl`, `Shift`, `Alt`,
+/// `Super` joined with `+` to a W3C key code such as `KeyM`, `F8`, `Space`.
+fn apply_hotkey(app: &AppHandle, combo: &str) -> Result<(), String> {
+    let shortcut = Shortcut::from_str(combo).map_err(|e| format!("Not a usable key combination: {e}"))?;
+    let gs = app.global_shortcut();
+    let state: State<Hotkey> = app.state();
+    let mut current = state.0.lock().map_err(|_| "hotkey state poisoned")?;
+    if let Some(old) = current.take() {
+        let _ = gs.unregister(old);
+    }
+    gs.on_shortcut(shortcut, |app, _shortcut, event| {
+        if event.state() == ShortcutState::Pressed {
+            let _ = app.emit("hotkey", ());
+        }
+    })
+    .map_err(|e| format!("Windows refused that hotkey (another app may own it): {e}"))?;
+    *current = Some(shortcut);
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_tooltip(Some(format!("Voice Notes ({} to dictate)", pretty_hotkey(combo))));
+    }
+    Ok(())
+}
+
+/// "Ctrl+Shift+KeyM" -> "Ctrl+Shift+M" for tooltips.
+fn pretty_hotkey(combo: &str) -> String {
+    combo
+        .split('+')
+        .map(|part| part.strip_prefix("Key").or_else(|| part.strip_prefix("Digit")).unwrap_or(part))
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+#[tauri::command]
+fn set_hotkey(app: AppHandle, combo: String) -> Result<String, String> {
+    apply_hotkey(&app, combo.trim())?;
+    Ok(pretty_hotkey(combo.trim()))
+}
 
 /// Start streaming the microphone to `api_url`'s dictation WebSocket.
 /// Transcript events arrive in the webview as `dictation` events with the
@@ -83,29 +127,23 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(Dictation(Mutex::new(None)))
+        .manage(Hotkey(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             start_dictation,
             stop_dictation,
             paste_text,
             hide_window,
-            mic_name
+            mic_name,
+            set_hotkey
         ])
         .setup(|app| {
-            // Global hotkey: the webview decides what "toggle" means (start or stop).
-            let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyM);
-            app.global_shortcut().on_shortcut(shortcut, |app, _shortcut, event| {
-                if event.state() == ShortcutState::Pressed {
-                    let _ = app.emit("hotkey", ());
-                }
-            })?;
-
             // Tray icon with Show / Quit.
             let show = MenuItem::with_id(app, "show", "Show Voice Notes", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().cloned().expect("window icon"))
-                .tooltip("Voice Notes (Ctrl+Shift+M to dictate)")
+                .tooltip("Voice Notes")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -119,6 +157,10 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Default global hotkey; the webview replaces it with the saved
+            // one once it loads. The webview decides what "toggle" means.
+            apply_hotkey(app.handle(), DEFAULT_HOTKEY).map_err(|e| std::io::Error::other(e))?;
             Ok(())
         })
         // Closing the window keeps the app (and the hotkey) alive in the tray.

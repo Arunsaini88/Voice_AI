@@ -86,6 +86,36 @@
   font-size: 14px;
 }
 
+.hotkey-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.kbd {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+.kbd:hover:not(:disabled) {
+  border-color: var(--accent-border);
+}
+.kbd.is-capturing {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  font-family: var(--sans);
+}
+.hint-error {
+  color: var(--danger);
+  opacity: 1;
+}
+
 /* Controls ------------------------------------------------------------------ */
 .card {
   background: var(--surface);

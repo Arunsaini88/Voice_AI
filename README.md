@@ -11,7 +11,7 @@ Dictate in English, Hindi, or Hinglish. Get live text as you speak, then a title
 Two ways to use it:
 
 - **Web app**: notes mode. Speak, stop, get a summarized note.
-- **Desktop app** (Windows, Tauri): the same notes mode, plus **type into any app**. Press Ctrl+Shift+M in any program, speak, press it again, and the text appears where your cursor is.
+- **Desktop app** (Windows, Tauri): the same notes mode, plus **type into any app**. Press a hotkey in any program, speak, press it again, and the text appears where your cursor is.
 
 ```
 voice-notes-frontend/   React 19 + Vite + TypeScript single-page app (shared by web and desktop)
@@ -77,7 +77,9 @@ npm run build                   # installer in src-tauri/target/release/bundle/n
 On first launch, enter the server URL (your deployed backend, or `http://localhost:8000` in development), then log in. Pick a mode at the top:
 
 - **Notes**: as the web app.
-- **Type into any app**: put the cursor where the text should go, press **Ctrl+Shift+M**, speak, press it again. The text is pasted at the cursor. Tick "Also save as a note" to keep a copy. Closing the window hides the app in the tray; the hotkey keeps working.
+- **Type into any app**: put the cursor where the text should go, press the hotkey (**Ctrl+Shift+M** by default), speak, press it again. The text is pasted at the cursor. Tick "Also save as a note" to keep a copy. Closing the window hides the app in the tray; the hotkey keeps working.
+
+To change the hotkey, click the key label under the Start button and press the combination you want: a function key such as F8 on its own, or any key with Ctrl, Shift or Alt. The Fn key by itself cannot be used; laptops handle it in the keyboard firmware and Windows never sees it. Fn+F-key combinations usually arrive as the F-key, so press that.
 
 No microphone? Set `VN_FAKE_MIC=C:\path\to\file.wav` before starting and the app streams that file instead.
 
