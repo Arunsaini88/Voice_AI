@@ -1,26 +1,54 @@
-// src/auth.ts — login token storage and an authenticated fetch wrapper.
+// src/auth.ts — session handling: short-lived access token in memory,
+// long-lived refresh token in localStorage, silent refresh on 401.
 export const API = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
 
-const TOKEN_KEY = "voice-notes-token";
+const REFRESH_KEY = "voice-notes-refresh";
+let accessToken: string | null = null;
 
-export function getToken(): string | null {
+type TokenPair = { access_token: string; refresh_token: string };
+
+function readRefresh(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    return localStorage.getItem(REFRESH_KEY);
   } catch {
     return null; // private window / storage blocked: user just has to log in each visit
   }
 }
 
-export function setToken(token: string | null) {
+function storeSession(pair: TokenPair) {
+  accessToken = pair.access_token;
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
+    localStorage.setItem(REFRESH_KEY, pair.refresh_token);
   } catch {
-    /* same as above */
+    /* see readRefresh */
   }
 }
 
-/** Thrown by authFetch on a 401 so callers can send the user back to the login screen. */
+export function clearSession() {
+  accessToken = null;
+  try {
+    localStorage.removeItem(REFRESH_KEY);
+  } catch {
+    /* see readRefresh */
+  }
+}
+
+export function getAccessToken(): string | null {
+  return accessToken;
+}
+
+/** Seconds until the access token expires, or 0 if there is none / it is unreadable. */
+export function accessTokenSecondsLeft(): number {
+  if (!accessToken) return 0;
+  try {
+    const payload = JSON.parse(atob(accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return Math.max(0, Math.floor(payload.exp - Date.now() / 1000));
+  } catch {
+    return 0;
+  }
+}
+
+/** Thrown when the session cannot be refreshed; callers send the user to the login screen. */
 export class AuthExpired extends Error {
   constructor() {
     super("Session expired — please log in again");
@@ -28,14 +56,68 @@ export class AuthExpired extends Error {
   }
 }
 
-/** fetch() with the bearer token attached. A 401 clears the stored token and throws AuthExpired. */
+// Single-flight: concurrent 401s share one refresh call, so a rotated token is
+// never presented twice (which the server would treat as theft).
+let inflight: Promise<string | null> | null = null;
+
+/** Trade the stored refresh token for a new pair. Resolves with the new access token, or null if the session is gone. */
+export function refreshSession(): Promise<string | null> {
+  if (inflight) return inflight;
+  inflight = (async () => {
+    const refresh = readRefresh();
+    if (!refresh) return null;
+    try {
+      const res = await fetch(`${API}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refresh }),
+      });
+      if (!res.ok) {
+        if (res.status === 401) clearSession(); // revoked / expired / replayed: start over
+        return null;                            // 5xx or network: keep tokens, caller decides
+      }
+      const pair: TokenPair = await res.json();
+      storeSession(pair);
+      return pair.access_token;
+    } catch {
+      return null;
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
+}
+
+/** On page load: turn a stored refresh token into a live session. */
+export async function restoreSession(): Promise<boolean> {
+  if (!readRefresh()) return false;
+  return (await refreshSession()) !== null;
+}
+
+/** Access token guaranteed to last at least `minSeconds` more, refreshing if needed. Null = logged out. */
+export async function ensureAccessToken(minSeconds = 60): Promise<string | null> {
+  if (accessToken && accessTokenSecondsLeft() > minSeconds) return accessToken;
+  return refreshSession();
+}
+
+/** fetch() with the bearer token. On 401 it refreshes once and retries; if that fails it throws AuthExpired. */
 export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const token = getToken();
-  const headers = new Headers(init.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  const res = await fetch(`${API}${path}`, { ...init, headers });
+  const send = (token: string) => {
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    return fetch(`${API}${path}`, { ...init, headers });
+  };
+
+  let token = await ensureAccessToken();
+  if (!token) throw new AuthExpired();
+  let res = await send(token);
+  if (res.status !== 401) return res;
+
+  token = await refreshSession();
+  if (!token) throw new AuthExpired();
+  res = await send(token);
   if (res.status === 401) {
-    setToken(null);
+    clearSession();
     throw new AuthExpired();
   }
   return res;
@@ -43,8 +125,8 @@ export async function authFetch(path: string, init: RequestInit = {}): Promise<R
 
 export type AuthMode = "login" | "signup";
 
-/** POST /auth/login or /auth/signup. Resolves with the token; rejects with the server's message. */
-export async function authenticate(mode: AuthMode, email: string, password: string): Promise<string> {
+/** POST /auth/login or /auth/signup. Stores the session; rejects with the server's message. */
+export async function authenticate(mode: AuthMode, email: string, password: string): Promise<void> {
   const res = await fetch(`${API}/auth/${mode}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -61,6 +143,22 @@ export async function authenticate(mode: AuthMode, email: string, password: stri
         : `${mode} failed (${res.status})`;
     throw new Error(msg);
   }
-  setToken(body.access_token);
-  return body.access_token as string;
+  storeSession(body as TokenPair);
+}
+
+/** Revoke the refresh token server-side (best effort), then forget the session locally. */
+export async function logout(): Promise<void> {
+  const refresh = readRefresh();
+  clearSession();
+  if (!refresh) return;
+  try {
+    await fetch(`${API}/auth/logout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refresh }),
+      keepalive: true,
+    });
+  } catch {
+    /* offline: the token expires on its own */
+  }
 }

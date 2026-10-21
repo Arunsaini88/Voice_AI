@@ -9,8 +9,10 @@ class Settings(BaseSettings):
     # Groq retires models without notice (llama-3.1-8b-instant went 404);
     # keep the name here so a swap is a .env change, not a code hunt.
     GROQ_MODEL: str = "qwen/qwen3.8-27b"
-    # Lifetime of a login token. Long because there is no refresh flow yet.
-    JWT_EXPIRE_DAYS: int = 7
+    # Access tokens are short-lived JWTs (not revocable); refresh tokens are
+    # stored server-side and rotated on every use, so they can be long-lived.
+    ACCESS_TOKEN_MINUTES: int = 30
+    REFRESH_TOKEN_DAYS: int = 30
 
     # Logging. LOG_FORMAT=json for production log shippers, text for a terminal.
     LOG_LEVEL: str = "INFO"

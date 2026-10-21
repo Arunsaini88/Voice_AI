@@ -79,7 +79,8 @@ All settings live in `voice-notes-backend/.env`. Defaults are tuned for a single
 | Variable | Default | Purpose |
 |---|---|---|
 | `GROQ_MODEL` | `qwen/qwen3.8-27b` | Groq retires models without notice; swap here, not in code |
-| `JWT_EXPIRE_DAYS` | `7` | Login token lifetime |
+| `ACCESS_TOKEN_MINUTES` | `30` | Access token (JWT) lifetime |
+| `REFRESH_TOKEN_DAYS` | `30` | Refresh token lifetime; rotated on every use |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins. Set to the deployed frontend URL |
 | `TRUST_PROXY_HEADERS` | `false` | Read `X-Forwarded-For` for per-IP limits. Only behind your own proxy |
 | `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | `json` for log shippers |
@@ -92,12 +93,14 @@ All settings live in `voice-notes-backend/.env`. Defaults are tuned for a single
 
 ## API
 
-All routes except `/health`, `/auth/signup`, and `/auth/login` need `Authorization: Bearer <token>`.
+All routes except `/health` and the four `/auth/*` POSTs need `Authorization: Bearer <access_token>`. Access tokens last 30 minutes; the frontend refreshes them silently.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/auth/signup` | `{email, password}` → `{access_token, user_id}`. Password 8 to 72 bytes |
+| `POST` | `/auth/signup` | `{email, password}` → `{access_token, refresh_token, expires_in, user_id}`. Password 8 to 72 bytes |
 | `POST` | `/auth/login` | Same shape. Wrong password and unknown email give the same 401 |
+| `POST` | `/auth/refresh` | `{refresh_token}` → new pair. The old refresh token is revoked; replaying it revokes the whole session |
+| `POST` | `/auth/logout` | `{refresh_token}` → 204. Revokes it |
 | `GET` | `/auth/me` | `{id, email}` |
 | `WS` | `/dictate/stream?lang=en\|hi\|hinglish&token=…` | Send audio bytes, then `{"type":"stop"}`. See the protocol in `docs/DEVELOPMENT.md` |
 | `POST` | `/notes` | `{transcript, language}` → summarized and saved note |

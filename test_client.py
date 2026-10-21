@@ -36,6 +36,8 @@ def get_token() -> str:
         print(f"[auth   ] created account {EMAIL}")
     if status not in (200, 201):
         sys.exit(f"auth failed ({status}): {body}")
+    # The 30-minute access token is plenty for one WAV; a real client would
+    # keep body["refresh_token"] and call /auth/refresh when it runs out.
     return body["access_token"]
 
 

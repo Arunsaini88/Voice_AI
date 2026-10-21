@@ -63,7 +63,7 @@ async def _signup(client, email):
     r = await client.post("/auth/signup", json={"email": email, "password": "correct-horse-battery"})
     assert r.status_code == 201, r.text
     body = r.json()
-    return SimpleNamespace(id=body["user_id"], token=body["access_token"],
+    return SimpleNamespace(id=body["user_id"], token=body["access_token"], refresh=body["refresh_token"],
                            headers={"Authorization": f"Bearer {body['access_token']}"}, email=email)
 
 

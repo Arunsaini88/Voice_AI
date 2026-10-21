@@ -3,7 +3,7 @@ import { useState, type FormEvent } from "react";
 import { authenticate, type AuthMode } from "./auth";
 import Brand from "./Brand";
 
-export default function Login({ onLogin }: { onLogin: (token: string) => void }) {
+export default function Login({ onLogin }: { onLogin: () => void }) {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -15,7 +15,8 @@ export default function Login({ onLogin }: { onLogin: (token: string) => void })
     setBusy(true);
     setError(null);
     try {
-      onLogin(await authenticate(mode, email, password));
+      await authenticate(mode, email, password);
+      onLogin();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

@@ -86,8 +86,10 @@ Deepgram's SDK invokes callbacks on its own thread. Anything raised there is los
 
 - Passwords are bcrypt hashed in a thread. Length 8 to 72 bytes, because bcrypt ignores everything past 72.
 - Login verifies against a dummy hash when the email is unknown so timing cannot reveal which accounts exist. Same 401 message either way.
-- Tokens are HS256 JWTs with `sub` = user id and a 7-day expiry. There is no refresh; the frontend logs out on any 401.
-- Notes carry `user_id` without a foreign key. Notes saved under the old static dev token have a user id with no matching row. Add the FK in the first Alembic migration after cleaning those up.
+- **Access tokens** are HS256 JWTs with `sub` = user id and a 30-minute expiry. They are verified by signature only, so they cannot be revoked; the short life is the mitigation.
+- **Refresh tokens** are random strings whose SHA-256 is stored in `refresh_tokens` (`services/tokens.py`). `POST /auth/refresh` rotates: the presented token is revoked and a new one issued in the same `family_id`. Presenting a revoked token again is treated as theft and revokes the whole family. `POST /auth/logout` revokes one token; `revoke_all_for_user` (for password reset) revokes everything.
+- The frontend keeps the access token in memory and the refresh token in localStorage. `authFetch` retries once after a refresh on 401; the dictation hook refreshes before connecting if the access token has under two minutes left. Moving the refresh token to an httpOnly cookie is a contained change in `auth.ts` plus the refresh route, and needs the frontend and API on one parent domain.
+- `notes.user_id` and `refresh_tokens.user_id` are foreign keys to `users.id` with cascade delete (migration 0002).
 
 ## Rate limits
 
@@ -138,7 +140,7 @@ Rules of thumb:
 - Change `models.py` first, then autogenerate, then **read the generated file**. Autogenerate misses renames (it sees drop + add) and does not detect JSON column changes well.
 - Every revision needs a working `downgrade`. CI runs upgrade, downgrade, upgrade on SQLite.
 - The first revision uses `IF NOT EXISTS` because the Neon database predates Alembic. Later revisions should not need that.
-- Pending: a foreign key from `notes.user_id` to `users.id`, after deleting notes whose `user_id` is `dev-user-1`.
+- Revision 0002 adds the notes foreign key inside `batch_alter_table`, which SQLite needs (it rebuilds the table) and Postgres tolerates (plain ALTER).
 - The Docker entrypoint runs `alembic upgrade head` before uvicorn, so deploying a new image migrates the database. With one backend instance that is safe; with several, run the migration as a separate release step instead.
 
 ## Docker and CI
@@ -161,10 +163,9 @@ Done: authentication, rate limits and caps, logging and failure handling, test s
 
 Remaining before a public launch:
 
-1. Password reset and token refresh.
+1. Password reset (email provider needed; revoke all refresh tokens on reset).
 2. Redis-backed rate limits when running more than one instance.
-3. Foreign key from notes to users once the pre-auth rows are cleaned up.
-4. Frontend unit tests (vitest) for `useDictation` and `auth.ts`.
+3. Frontend unit tests (vitest) for `useDictation` and `auth.ts`.
 
 ### Checking the UI without a browser session
 

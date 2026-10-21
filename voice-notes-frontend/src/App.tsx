@@ -1,7 +1,7 @@
 // src/App.tsx
 import { useCallback, useEffect, useState } from "react";
 import { AUTH_EXPIRED, useDictation } from "./hooks/useDictation";
-import { AuthExpired, authFetch, getToken, setToken } from "./auth";
+import { AuthExpired, authFetch, logout as endSession, restoreSession } from "./auth";
 import Brand from "./Brand";
 import Login from "./Login";
 import "./App.css";
@@ -20,21 +20,30 @@ type Note = {
   created_at: string;
 };
 
-export default function App() {
-  const [token, setTokenState] = useState<string | null>(getToken);
+type Session = "restoring" | "out" | "in";
 
-  const logout = useCallback(() => {
-    setToken(null);
-    setTokenState(null);
+export default function App() {
+  // On load, a stored refresh token is traded for a live access token before
+  // anything renders, so a reload never flashes the login screen.
+  const [session, setSession] = useState<Session>("restoring");
+
+  useEffect(() => {
+    restoreSession().then((ok) => setSession(ok ? "in" : "out"));
   }, []);
 
-  if (!token) return <Login onLogin={setTokenState} />;
-  return <Workspace token={token} onLogout={logout} />;
+  const logout = useCallback(() => {
+    void endSession();
+    setSession("out");
+  }, []);
+
+  if (session === "restoring") return null;
+  if (session === "out") return <Login onLogin={() => setSession("in")} />;
+  return <Workspace onLogout={logout} />;
 }
 
-function Workspace({ token, onLogout }: { token: string; onLogout: () => void }) {
+function Workspace({ onLogout }: { onLogout: () => void }) {
   const [language, setLanguage] = useState<Language>("en");
-  const { liveText, segments, status, error, start, stop } = useDictation(language, token);
+  const { liveText, segments, status, error, start, stop } = useDictation(language);
   const [notes, setNotes] = useState<Note[]>([]);
   const [email, setEmail] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);

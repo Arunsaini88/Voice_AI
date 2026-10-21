@@ -1,6 +1,6 @@
 // src/hooks/useDictation.ts
 import { useRef, useState } from "react";
-import { API } from "../auth";
+import { API, ensureAccessToken } from "../auth";
 
 type Language = "en" | "hi" | "hinglish";
 type Status = "idle" | "recording" | "finishing";
@@ -10,7 +10,7 @@ const FLUSH_TIMEOUT_MS = 4000; // never let stop() hang if the server goes quiet
 /** Sentinel error value: the server rejected the login token. App turns this into a logout. */
 export const AUTH_EXPIRED = "AUTH_EXPIRED";
 
-export function useDictation(language: Language, token: string) {
+export function useDictation(language: Language) {
   const [liveText, setLiveText] = useState("");
   const [segments, setSegments] = useState<string[]>([]);
   const [status, setStatus] = useState<Status>("idle");
@@ -43,6 +43,14 @@ export function useDictation(language: Language, token: string) {
     // Opening the page via a LAN IP (http://192.168.x.x:5173) leaves it undefined.
     if (!navigator.mediaDevices?.getUserMedia) {
       setError(`Microphone API unavailable — open the page via http://localhost, not ${location.host}`);
+      return;
+    }
+
+    // The server only checks the token when the socket opens, so make sure it
+    // will not expire mid-handshake; a long recording is unaffected afterwards.
+    const token = await ensureAccessToken(120);
+    if (!token) {
+      setError(AUTH_EXPIRED);
       return;
     }
 

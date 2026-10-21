@@ -1,5 +1,5 @@
 # app/models.py
-from sqlalchemy import Column, String, Text, DateTime, JSON
+from sqlalchemy import Column, String, Text, DateTime, JSON, ForeignKey
 from sqlalchemy.orm import declarative_base
 import uuid, datetime
 
@@ -20,13 +20,25 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), default=_now)
 
 
+class RefreshToken(Base):
+    """One row per issued refresh token. Only the SHA-256 of the token is
+    stored, so a database leak does not hand out sessions. `family_id` ties
+    together every token descended from one login; a replayed (already
+    revoked) token revokes the whole family."""
+    __tablename__ = "refresh_tokens"
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String, nullable=False, unique=True, index=True)
+    family_id = Column(String, nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    revoked_at = Column(DateTime(timezone=True))
+
+
 class Note(Base):
     __tablename__ = "notes"
     id = Column(String, primary_key=True, default=_uuid)
-    # No FK to users.id: notes created under the old static dev token have
-    # user_id "dev-user-1" with no matching row. Add the FK with the first
-    # Alembic migration once that data is cleaned up.
-    user_id = Column(String, nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     raw_transcript = Column(Text, nullable=False)
     title = Column(String)
     summary = Column(Text)
